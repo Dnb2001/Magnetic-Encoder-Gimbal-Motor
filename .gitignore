@@ -1,0 +1,43 @@
+# =================================================================
+# 职业级嵌入式项目 Git 忽略清单
+# =================================================================
+
+# --- 1. 编译输出文件 (Build Artifacts) ---
+# 忽略所有编译器生成的二进制文件、目标文件及链接映射文件
+*.obj
+*.out
+*.map
+*.asm
+*.d
+*.abs
+*.hex
+*.bin
+*.elf
+*.lib
+*.a
+
+# 忽略整个编译输出目录（通常为 Debug 或 Release）
+[Dd]ebug/
+[Rr]elease/
+bin/
+obj/
+
+# --- 2. IDE 及编辑器临时配置 (IDE & Editor Settings) ---
+# 忽略本地窗口布局、断点信息等个人偏好设置（这些不应同步给同事）
+.launches/
+.settings/
+.config/
+*.launch
+*.user
+*.bak
+*.dep
+
+# --- 3. 操作系统及系统残留 (OS Metadata) ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- 4. 其它临时文件 ---
+*.tmp
+*.log
+*.pjt
