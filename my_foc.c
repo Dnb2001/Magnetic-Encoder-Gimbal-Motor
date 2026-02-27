@@ -51,7 +51,7 @@ void Run_PI(PI_CONTROLLER *pi)
     if (pi->Out > pi->OutMax) pi->Out = pi->OutMax;
     if (pi->Out < pi->OutMin) pi->Out = pi->OutMin;
 }
-
+#warning "这里为什么一开始是SPWM"
 // 5. 简易 SVPWM 生成
 void Run_SVPWM_Simple(FOC_Handle *foc, float DC_Bus_Voltage)
 {
