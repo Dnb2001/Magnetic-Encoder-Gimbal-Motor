@@ -10,7 +10,7 @@
 //#define ADC_OFFSET_A    2286.0f   // A相偏置值 (零点)
 //#define ADC_OFFSET_B    2286.0f   // B相偏置值
 //#define ADC_OFFSET_C    2286.0f   // B相偏置值
-#define ADC_SCALE       15.0f     // 比例系数 (Amps per Count) = 3.0V / 4096 / 运放放大倍数 / 采样电阻
+#define ADC_SCALE       0.0111f     // 比例系数 (Amps per Count) = 3.0V / 4096 / 运放放大倍数 / 采样电阻
 
 // --- 定义电流数据结构体 ---
 typedef struct {
@@ -20,7 +20,8 @@ typedef struct {
 } MOTOR_CURRENT;
 
 extern MOTOR_CURRENT m_current;
-
+extern volatile float zero_offset_rad;
+extern Uint16 can_tx_ready_flag;
 void InitAdc_User(void);       // 初始化 ADC 模块
 void Read_Phase_Currents(void); // 读取并转换电流
 void Read_Phase_Current_Zero(void);

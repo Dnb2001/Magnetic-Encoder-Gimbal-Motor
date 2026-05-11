@@ -39,5 +39,6 @@ void Init_Spia_AS5047P(void);
 int Check_Parity(Uint16 data);
 Uint16 Read_AS5047P_Raw(void);
 float Get_Electrical_Angle(void);
-
+void Clear_AS5047P_Error(void);
+float Get_Electrical_Angle(void);
 #endif /* MY_SPI_H_ */

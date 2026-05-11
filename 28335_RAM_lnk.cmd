@@ -130,7 +130,9 @@ SECTIONS
    #endif
 #endif    
    
-   .text            : > RAML1,     PAGE = 0
+   /*.text            : > RAML1,     PAGE = 0*/
+   /* 将 RAML1, RAML2, RAML3 合并使用，总空间达到 0x3000 */
+   .text            : >> RAML1 | RAML2 | RAML3,   PAGE = 0
    .cinit           : > RAML0,     PAGE = 0
    .pinit           : > RAML0,     PAGE = 0
    .switch          : > RAML0,     PAGE = 0

@@ -36,6 +36,11 @@
 			<locationURI>PARENT-5-PROJECT_LOC/ti/c2000/C2000Ware_4_03_00_00/device_support/f2833x/common/source/DSP2833x_DefaultIsr.c</locationURI>
 		</link>
 		<link>
+			<name>DSP2833x_ECan.c</name>
+			<type>1</type>
+			<locationURI>PARENT-5-PROJECT_LOC/ti/c2000/C2000Ware_4_03_00_00/device_support/f2833x/common/source/DSP2833x_ECan.c</locationURI>
+		</link>
+		<link>
 			<name>DSP2833x_GlobalVariableDefs.c</name>
 			<type>1</type>
 			<locationURI>PARENT-5-PROJECT_LOC/ti/c2000/C2000Ware_4_03_00_00/device_support/f2833x/headers/source/DSP2833x_GlobalVariableDefs.c</locationURI>

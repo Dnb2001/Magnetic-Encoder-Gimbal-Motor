@@ -5,11 +5,13 @@
 #include "my_epwm.h"
 #include "my_adc.h"
 #include "my_spi.h"
-
+#include "my_can.h"
+#include "my_qep.h"
 Uint16 run_flag = 0;      // 1: 开始呼吸, 0: 停止呼吸
 Uint16 mode = 0;          // 0: 自动呼吸模式, 1: 手动调节模式
-int test_sum = 0;
 
+int test_sum = 0;
+int can_send_flag = 1;
 // --- 虚拟角度测试变量 ---
 float freq_target_hz = 1.0f;  // 目标电频率
 #define PWM_FREQ  10000.0f    // PWM 频率
@@ -33,7 +35,7 @@ void ClearTzFault(void)
 }
 
 
-
+Uint32 spi_err_cnt = 0;  // SPI 误码计数器
 void main(void)
 {
     fault_flag = 0;
@@ -59,6 +61,7 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     SysCtrlRegs.PCLKCR1.bit.EPWM3ENCLK = 1;  // 开2时钟
     SysCtrlRegs.PCLKCR0.bit.TBCLKSYNC = 0;   // 先停止同步
     SysCtrlRegs.PCLKCR0.bit.SPIAENCLK = 1; // 开启 SPI-A 模块的时钟
+    SysCtrlRegs.PCLKCR0.bit.ECANBENCLK = 1;  // 使能eCANB时钟
     EDIS;
 
     InitAdc_User();             // 初始化ADC
@@ -69,7 +72,9 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     InitTzPwm();
     //InitSpiaGpio();
     Init_Spia_AS5047P();
-
+    Clear_AS5047P_Error();
+    Init_eCANB_Config();
+    InitEQep1_AS5047P();
 //  -- 配置 GPIO 引脚 功能
     EALLOW;
     GpioCtrlRegs.GPAMUX1.bit.GPIO0 = 1;      // GPIO0 -> EPWM1A
@@ -78,6 +83,10 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     GpioCtrlRegs.GPAMUX1.bit.GPIO3 = 1;      // GPIO3 -> EPWM2B
     GpioCtrlRegs.GPAMUX1.bit.GPIO4 = 1;      // GPIO4 -> EPWM3A
     GpioCtrlRegs.GPAMUX1.bit.GPIO5 = 1;      // GPIO5 -> EPWM3B
+    GpioCtrlRegs.GPAMUX2.bit.GPIO16 = 2;      // GPIO16 -> CANTXB
+    GpioCtrlRegs.GPAMUX2.bit.GPIO17 = 2;      // GPIO17 -> CANRXB
+    GpioCtrlRegs.GPAPUD.bit.GPIO17 = 0;       // 极重要：开启 CANRXB(GPIO17) 的内部上拉电阻
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO17 = 3;     // 将 GPIO17 设为异步输入，避免 CPU 采样窗延迟
 
     // TZ保护引脚
     // 1. 将 GPIO12 设置为 TZ1 功能引脚
@@ -106,7 +115,8 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     IER |= M_INT2; // 使能 CPU 级中断 Group 2 (TZ 在这里)
     //IER |= M_INT3;  不再使用ePWM中断
 
-    Read_Phase_Current_Zero();  //读取霍尔零位
+    //Read_Phase_Current_Zero();  //读取霍尔零位
+    sys_state = STATE_IDLE;
 // 3. 开启全局中断
     EINT;   // 使能总中断
     ERTM;   // 使能实时中断
@@ -117,17 +127,41 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     */
 //----------------------初始化结束----------------------------//
 
+    Alignment_flag = 0;
+    //Motor_Alignment();  // 对齐
 
     command = 0x3FFF;
+
 while(1)
 {
-    ClearTzFault();
-    fault_flag = 0;
-    DELAY_US(200000);
+    //ClearTzFault();
+    //fault_flag = 0;
+    //DELAY_US(10000);
+    Check_CAN_Receive();
+    //can_send_flag = Send_Message_WithTimeout();
+    // 接收可以一直轮询，因为不怎么耗时
+            Check_CAN_Receive();
 
+            // 检查是否有 10ms 快照数据准备好
+            if (can_tx_ready_flag == 1)
+            {
+                // 【进阶技巧：临界区保护】
+                // 在把内存里的 TxMsg 搬运到 CAN 硬件寄存器的这几微秒内，
+                // 关一下全局中断，防止刚好碰到下个 10ms 到来把 TxMsg 覆盖掉
+                DINT;
+                ECanbMboxes.MBOX1.MDL.all = SWAP_BYTES32(TxMsg_101_MDL.all);
+                ECanbMboxes.MBOX1.MDH.all = SWAP_BYTES32(TxMsg_101_MDH.all);
+                ECanbMboxes.MBOX2.MDL.all = SWAP_BYTES32(TxMsg_102_MDL.all);
+                ECanbMboxes.MBOX2.MDH.all = SWAP_BYTES32(TxMsg_102_MDH.all);
+                EINT;
 
-    elec_angle = Get_Electrical_Angle();
-    //as5047_data.all = SpiaRegs.SPIRXBUF;
+                // 触发硬件发送 (邮箱2)
+                ECanbRegs.CANTRS.bit.TRS1 = 1;
+                ECanbRegs.CANTRS.bit.TRS2 = 1;
+                // 清除标志位，等待下一个 10ms
+                can_tx_ready_flag = 0;
+            }
+
 }
 
 

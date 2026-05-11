@@ -1,5 +1,5 @@
 #include<my_spi.h>
-
+#include<my_foc.h>
 // 定义 CS 信号控制宏 (针对 GPIO 57)
 // GPIO 57 属于 Group B，位偏移为 57 - 32 = 25
 #define AS5047P_CS_LOW   GpioDataRegs.GPBCLEAR.bit.GPIO57 = 1
@@ -33,7 +33,7 @@ void Init_Spia_AS5047P(void) {
 
     // AS5047P 要求的 Mode 1: CPOL=0, CPHA=1
     SpiaRegs.SPICCR.bit.CLKPOLARITY = 0;
-    SpiaRegs.SPICTL.bit.CLK_PHASE = 1;
+    SpiaRegs.SPICTL.bit.CLK_PHASE = 0;
 
     SpiaRegs.SPICTL.bit.MASTER_SLAVE = 1; // DSP 作为主机
     SpiaRegs.SPICTL.bit.TALK = 1;         // 使能发送功能
@@ -67,44 +67,64 @@ Uint16 response ;
 Uint16 command; // 读 指令
 Uint16 Read_AS5047P_Raw(void)
 {
-    Uint16 command = 0xFFFF; // 读角度指令
-
-
-    // 1. 发送读取请求
+    // 【必须是 0xFFFF】: 读标志(1) + 偶校验标志(1) + 地址(0x3FFF)
     AS5047P_CS_LOW;
-    DELAY_US(2);
-    //SpiaRegs.SPITXBUF = command | 0x4000; // 加上读位标志
-    SpiaRegs.SPITXBUF = command; //a
-    while(SpiaRegs.SPIFFRX.bit.RXFFST < 1); // 等待接收完成 (或查询标志位)
+    DELAY_US(1);
+    SpiaRegs.SPITXBUF = 0xFFFF;
+    while(SpiaRegs.SPIFFRX.bit.RXFFST < 1);
     response = SpiaRegs.SPIRXBUF;
-    // 在你读取 SPI 的地方
-    debug_frame.all = SpiaRegs.SPIRXBUF;
+    DELAY_US(1);
     AS5047P_CS_HIGH;
 
-    // 2. 校验与解析
-    // 注意：AS5047P 的第 15 位是校验位，第 14 位是错误标志位
+    // 如果校验通过且无错误标志
     if (Check_Parity(response) && !(response & 0x4000)) {
-        return (response & 0x3FFF); // 返回 14 位原始数据 (0-16383)
+        return (response & 0x3FFF);
     } else {
-        return 0xFFFF; // 报错返回特权值
+        return 0xFFFF; // 报错特权值
     }
 }
-
+extern Uint32 spi_err_cnt;
 Uint16 raw_data ;
 float mech_angle;
 float elec_angle;
+float w_elec;
 float Get_Electrical_Angle(void) {
+    // 使用静态变量，防止报错时污染数据
+    static float last_elec_rad = 0.0f;
+
     raw_data = Read_AS5047P_Raw();
-    if(raw_data > 16383) return -1.0f; // 错误处理
+    if(raw_data > 16383) {
+        spi_err_cnt++;
+        return last_elec_rad; // 安全返回历史值
 
-    // 1. 计算机械角度 (0 ~ 360°)
-    mech_angle = (float)raw_data * 360.0f / 16384.0f;
+    }
 
-    // 2. 转换为电角度 (乘以极对数 7)
-    elec_angle = mech_angle * 7.0f;
+    // 计算纯净弧度 (0 ~ 2*PI)
+    float mech_rad = (float)raw_data * 6.2831853f / 16384.0f;
+    float elec_rad = mech_rad * 7.0f;
 
-    // 3. 归一化到 0 ~ 360° 范围内
-    while(elec_angle >= 360.0f) elec_angle -= 360.0f;
+    while(elec_rad >= 6.2831853f) elec_rad -= 6.2831853f;
 
-    return elec_angle;
+    last_elec_rad = elec_rad;
+    return elec_rad;
+}
+// 专门用于清除 AS5047P 历史错误标志的函数
+void Clear_AS5047P_Error(void)
+{
+    // 读取 ERRFL 寄存器 (地址 0x0001)
+    // 读标志位=1，地址=0x0001 -> 0x4001。
+    // 0x4001 中 1 的个数为 2 (偶数)，所以第 15 位校验位=0。
+    // 最终发送指令为：0x4001
+
+    AS5047P_CS_LOW;
+    DELAY_US(1);
+
+    SpiaRegs.SPITXBUF = 0x4001;              // 发送清错指令
+    while(SpiaRegs.SPIFFRX.bit.RXFFST < 1);  // 等待接收
+    Uint16 dump = SpiaRegs.SPIRXBUF;         // 读出来丢弃即可，读这个动作本身就会清空 EF
+
+    DELAY_US(1);
+    AS5047P_CS_HIGH;
+
+    DELAY_US(10); // 让芯片缓一下
 }
