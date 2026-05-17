@@ -30,6 +30,48 @@ void InitAdc_User(void)
     SysCtrlRegs.HISPCP.all = 3;
 
     // 3. 配置 ADC 控制寄存器
+    /*  ADCTRL1 ADC Control Register 1   负责设置排序器模式、采样窗口时间以及时钟预分频
+     *  15      Reserved    保留  保持为 0
+     *  14      RESET       软件复位 ADC    写 1 后，ADC 模块会被复位到初始状态。执行后硬件自动清零
+     *  13:12   SUSMOD      仿真挂起模式     00: 忽略暂停，继续工作（通常用于防止电机失控）
+     *
+     *  11:8    ACQ_PS  Acquisition Prescale 采样窗口大小 窗口时间 = (ACQ_PS + 1) * ADCCLK
+     *                                       由于外部调理电路存在阻抗，必须给采样电容足够的时间充电
+     *                                       通常外设时钟快时，需要将此值加大（例如设为 0xF），确保采样精准。
+     *  7       CPS     Core Clock Prescale  控制高速外设时钟（HSPCLK）到 ADC 时钟的除 2 开关   为1时 ADCCLK = HSPCLK / 2
+     *  6       CONT_RUN   Continuous Run    0: 启停模式 (Start-Stop)。收到一次触发，排序器走一圈后就停下来，等下一次触发。 (FOC 闭环必选！)
+     *                                       1: 连续模式。收到一次触发后，排序器就像疯了一样，跑完一圈立刻从头开始跑下一圈，永远不停，除非软件强行复位
+     *  5       SEQ_OVRD    排序器覆盖         在连续运行模式下，如果在序列末尾重置，是否重新开始。
+     *  4       SEQ_CASC    Sequencer Cascaded    0: 拆分成两个独立的 8 状态排序器 (SEQ1 和 SEQ2)。
+     *                                            1: 级联成一个 16 状态的超级排序器 (SEQ1)。
+     *  3:0     Reserved    保留
+     *
+     *  ADCTRL2 ADC Control Register 2   开启和选择触发源（谁来下达采样总司令命令），以及使能 SEQ1 中断
+     *  15  EPWM_SOCB_SEQ   ePWM SOCB 触发 SEQ1   1: 允许 ePWM 发出的 SOCB 硬件信号触发 SEQ1
+     *  14  RST_SEQ1        复位 SEQ1             写 1 让 SEQ1 立即回到 CONV00 插槽重新开始排队
+     *  13  SOC_SEQ1        软件触发 SEQ1          写 1 相当于你在代码里手动按了一次采样按钮
+     *  12  Reserved        保留
+     *  11  INT_ENA_SEQ1    SEQ1 中断使能          1: 允许 SEQ1 转换完毕后向 CPU 申请中断。触发中断进入 adc_isr 运行 FOC 环路
+     *  10  INT_MOD_SEQ1    SEQ1 中断模式          0: 每个序列结束都产生中断。 1: 每隔一个序列才产生一次中断。
+     *  9   Reserved
+     *  8   EPWM_SOCA_SEQ1  ePWM SOCA 触发 SEQ1   FOC 的灵魂位！ 1: 允许 ePWM 发出的 SOCA 信号触发 SEQ1 进行采样。
+     *  7   EXT_SOC_SEQ1    外部引脚触发 SEQ1       1: 允许通过外部 GPIO（如 ADCSOC 引脚）的高低电平来触发采样。
+     *  6:0 (SEQ2 相关)      SEQ2 的控制位          功能与 15-8 位完全类似，专门用于独立运行的 SEQ2 排序器。
+     *
+     *  ADCTRL3 ADC Control Register 3   负责 ADC 的上电上电、时钟二次分频、以及选择“同步/串行”采样模式
+     *  15:8    Reserved        保留
+     *  7       ADCPWDN ADC     模拟电路供电开关    0: ADC 核心电路断电（省电模式）。 1: 上电。所有配置完成后必须写 1。
+     *  6       ADCBGRFDN       带隙参考电压供电开关 0: 带隙基准断电。  1: 上电。这是提供 ADC 转换比较基准的，不亮它采出来的数字是随机的
+     *  5       ADCCLKPSADC     时钟二次预分频      配合 ADCTRL1 的 CPS 位，共同决定最终的 ADCCLK
+     *  4:1     (合并到 Bit 5)
+     *  0       SMODE_SEL       同步/串行采样选择   FOC 关键位！  0: 串行采样。采完 A0，再采 B0，依次进行
+     *                                          1: 同步采样 当排序器指向 CONV00(设为引脚0)时，两个独立的采样保持器会同时抓取 A0 和 B0 的电平
+     *  ADCMAXCONV (最大转换通道数寄存器)
+     *  这个寄存器里填的值是 N，代表排序器会执行从 CONV00 到 CONV[N]  实际转换的次数等于填的数字 + 1
+     *  ADCCHSELSEQ1 到 ADCCHSELSEQ4
+     *  包含CONV00-15，级联时在  ADCCHSELSEQ1 和 ADCCHSELSEQ2  填0-7 对于A0 B0 到 A7 B7 控制采样顺序
+     *  串联时  在  ADCCHSELSEQ1 到和 ADCCHSELSEQ4  填0-15 代表A0-7和B0-7
+     */
     AdcRegs.ADCTRL1.bit.ACQ_PS = 0xF;      // 采样窗口设大一点，保证信号稳定 (16个ADCCLK)
     AdcRegs.ADCTRL1.bit.CPS = 0;           // 预分频不需再分
     AdcRegs.ADCTRL1.bit.SEQ_CASC = 1;      // 级联模式 (16通道看作一个序列，方便管理)
@@ -45,8 +87,7 @@ void InitAdc_User(void)
     AdcRegs.ADCTRL2.bit.INT_MOD_SEQ1 = 0;  // 每转换完 1 次 SEQ1 就产生一次中断
     // 4. 配置采样通道
     // 0x0 代表通道 0：采样 ADCINA0 (A相) 和 ADCINB0 (B相) -> 结果放入 RESULT0, RESULT1
-    AdcRegs.ADCCHSELSEQ1.bit.CONV00 = 0x0;
-
+    AdcRegs.ADCCHSELSEQ1.bit.CONV00 = 0x0;  // ADCINA0-A7为0-7，ADCINB0-B7为8-15
     // 0x1 代表通道 1：采样 ADCINA1 (C相) 和 ADCINB1 (未使用) -> 结果放入 RESULT2, RESULT3
     AdcRegs.ADCCHSELSEQ1.bit.CONV01 = 0x1;
 
