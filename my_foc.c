@@ -208,3 +208,11 @@ void Calc_DeadTime_Comp(FOC_Handle *foc, float u_comp_max, float i_thresh)
     else if (ic_ref < -i_thresh) U_comp_C = -u_comp_max;
     else                         U_comp_C = u_comp_max * (ic_ref / i_thresh);
 }
+/*  计算rpm转速
+ *  电角速度 = 极对数Pn * 机械角速度
+ *  机械速度 = 60 * 机械角速度 / 2pi
+ *         = 60 * 电角速度  / ( 2pi * 极对数Pn )
+ *         = 电角速度 *  60 / ( 2pi * 7 )
+ *         = 电角速度 *  60 / ( 2pi * 极对数Pn )
+ *         = 1.3641852 * 电角速度
+ */
