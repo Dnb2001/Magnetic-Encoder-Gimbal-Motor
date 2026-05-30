@@ -1,6 +1,6 @@
 #include "DSP2833x_Device.h"
 #include "DSP2833x_Examples.h"
-
+#include "my_foc.h"
 /*  QEPCTL (QEP 控制寄存器) —— “总司令与发令枪”
  *  这个寄存器决定了 eQEP 模块什么时候开始工作，以及它遇到特殊事件（比如 Z 脉冲、定时器溢出）时该做出什么动作。
  *  15:14   FREE_SOFT       仿真控制模式。
@@ -161,4 +161,53 @@ void InitEQep1_AS5047P(void)
     // =========================================================
     EQep1Regs.QPOSCNT = 0;                // 计数器清零
     EQep1Regs.QEPCTL.bit.QPEN = 1;        // 全面使能 eQEP1 模块开始工作
+}
+
+    int32 QEP_offset = 0;       // 使用有符号 32 位整型
+    float QEP_Mech_Theta = 0.0f;  // QEP 机械角度
+    float QEP_Elc_Theta = 0.0f;   // QEP 电角度
+    // 定义你的物理磁极安装夹角 (QEP 比 SPI 大 3.46)
+    const float CONST_MAGNETIC_OFFSET = 3.46f;
+
+// ============ 闭环运行时的计算 (放在中断里) ============
+    float qep_spi;
+void Calculate_QEP_Angle(void)
+{
+    // 1. 读取当前计数值，并立刻转为有符号整数
+    int32 current_qpos = (int32)EQep1Regs.QPOSCNT;
+
+    // 2. 计算相对 Z 脉冲的脉冲差值
+    //int32 delta_pos =  QEP_offset - current_qpos;
+
+    // 3. 处理跨越 0 或 3999 时的物理绕回
+    // （假设顺时针转一圈后，delta_pos 会超过 4000，逆时针会小于 0）
+    /*if(delta_pos < 0)
+    {
+        delta_pos += 4000;
+    }
+    else if(delta_pos >= 4000)
+    {
+        delta_pos -= 4000;
+    }*/
+
+    // 4. 计算机械角度 (弧度)
+    QEP_Mech_Theta = (float)current_qpos * (-6.2831853f / 4000.0f);
+
+    // 5. 计算电角度 = 机械角度 * 极对数
+    QEP_Elc_Theta = ( QEP_Mech_Theta * 7.0f ) - CONST_MAGNETIC_OFFSET ;
+
+    // 6. 将电角度归一化到 0 ~ 2*PI 之间
+    // （因为乘了 7，所以结果可能会达到 14*PI，必须把多余的圈数去掉）
+    while(QEP_Elc_Theta >= 6.2831853f)
+    {
+        QEP_Elc_Theta -= 6.2831853f;
+    }
+    while(QEP_Elc_Theta < 0.0f) // 虽然上面的逻辑保证了不会小于0，但加上更保险
+    {
+        QEP_Elc_Theta += 6.2831853f;
+    }
+    // 7. 输出给 FOC 算法
+    foc.Theta = QEP_Elc_Theta;
+    //qep_spi = QEP_Elc_Theta - foc.Theta;
+    // 现在，你可以在 Expressions 里安全地把 QEP_Elc_Theta 和你的 SPI 角度进行对比了！
 }
