@@ -151,15 +151,17 @@ __interrupt void adc_isr(void)
       case STATE_CALIB:
           GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
           Read_Phase_Current_Zero();     // 读取霍尔零位
-          sys_state = STATE_ALIGN;       // 自动跳到对齐
           GpioDataRegs.GPBSET.bit.GPIO52 = 1;
           DELAY_US(5);
+          //sys_state = STATE_ALIGN;       // 自动跳到对齐
+          zero_offset_rad = 3.47715044;
+          sys_state = STATE_RUN;       // 跳过对齐 直接跑
       break;
 
       // 对齐
       case STATE_ALIGN:
-            #warning "怎么算出来40000是2s"
-          if ( align_cnt < 40000 )
+
+          if ( align_cnt < 20000 )
            {   // main里正在运行对齐
               foc.Vd = 0.6f;
               foc.Vq = 0.0f;
@@ -266,7 +268,7 @@ __interrupt void adc_isr(void)
         // 假设 TBPRD = 7500 (对应20kHz), 且是 UpDown 计数模式
         // 在 UpDown 模式下，全周期计数其实是 15000 个时钟，但 CMPA 还是参照 TBPRD
         // SVPWM 输出 Ta, Tb, Tc 范围是 0.0 ~ 1.0
-        Uint16 period = 3750; // 你的 TBPRD
+        Uint16 period = 7500; // 你的 TBPRD
 
         // 简单的限幅保护
         if(foc.Ta > 0.95f) foc.Ta = 0.95f; if(foc.Ta < 0.05f) foc.Ta = 0.05f;
