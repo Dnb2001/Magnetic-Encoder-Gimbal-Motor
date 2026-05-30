@@ -160,9 +160,9 @@ float Calculate_Speed(float current_theta)
     last_theta = current_theta;
 
     // 3. 计算原始角速度
-    // 假设速度环每 10 个 PWM 周期执行一次 (PWM 是 10kHz，速度环就是 1kHz)
-    // 周期 T = 0.001s, 速度 = delta / T = delta * 1000.0f
-    raw_speed = delta_theta * 500.0f;
+    // 速度环执行频率 = 20kHz / 40分频 = 500Hz
+    // 速度 = delta_theta * 频率
+    raw_speed = delta_theta * 250.0f;
 
     // 4. 一阶低通滤波 (滤除微分带来的高频噪声)
     // 0.95 和 0.05 是权重，0.05 越小，滤波越强，但延迟越大
