@@ -134,7 +134,7 @@ void InitEQep1_AS5047P(void)
     EQep1Regs.QPOSINIT = 0;               // 初始位置设定为 0
 
     // QDECCTL: 解码控制
-    EQep1Regs.QDECCTL.bit.QSRC = 00;      // 正交计数模式
+    EQep1Regs.QDECCTL.bit.QSRC = 0;      // 正交计数模式
     EQep1Regs.QDECCTL.bit.IGATE = 0;      // 禁用 Index 门控 (AS5047P的Z信号通常较宽)
     EQep1Regs.QDECCTL.bit.QAP = 0;        // A 相极性不反转
     EQep1Regs.QDECCTL.bit.QBP = 0;        // B 相极性不反转
@@ -144,8 +144,8 @@ void InitEQep1_AS5047P(void)
     EQep1Regs.QEPCTL.bit.FREE_SOFT = 2;   // 仿真器挂起（打断点）时，位置计数器不受影响，继续运行
 
     // 【寻零核心配置】
-    EQep1Regs.QEPCTL.bit.PCRM = 00;       // 在检测到 Index (Z脉冲) 事件时，自动复位 QPOSCNT
-    EQep1Regs.QEPCTL.bit.IEI = 10;        // 指定 Index 事件由上升沿触发
+    EQep1Regs.QEPCTL.bit.PCRM = 0;       // 在检测到 Index (Z脉冲) 事件时，自动复位 QPOSCNT
+    EQep1Regs.QEPCTL.bit.IEI = 2;        // 指定 Index 事件由上升沿触发
 
     // =========================================================
     // 4. 单位定时器配置 (Unit Timer) - 用于后续计算转速
