@@ -2,8 +2,8 @@
 #include "my_adc.h"
 #include "my_foc.h"
 
-#define TBPRD_ALL 3750      // 计数周期
-#define TBPRD_init 1875     // 计数器初始值
+#define TBPRD_ALL 7500      // 计数周期  3750表示20k，7500为10k
+#define TBPRD_init 3750     // 计数器初始值
 
 void InitTzPwm(void)
 {
