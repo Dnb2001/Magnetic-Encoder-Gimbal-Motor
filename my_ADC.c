@@ -119,6 +119,9 @@ void Read_Phase_Currents(void)
 #warning "这里为什么用static"
     static Uint16 speed_loop_cnt = 0; // 新增：速度环计数器
     static Uint16 can_pack_cnt = 0; // 新增：CAN数据打包计数器
+    float virtual_theta = 0;
+    Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
+
 __interrupt void adc_isr(void)
 {
     // 1. 基础数据采集 读取电流 (结果存入 m_current 结构体)
@@ -145,6 +148,10 @@ __interrupt void adc_isr(void)
             pi_iq.Ref = 0;
             pi_spd.Ref = 0;
             pi_spd.Ui = 0; pi_spd.Out = 0; // <--- 必须加上！彻底清除速度环历史记忆
+            virtual_theta = 0;
+            RunMode = 0;
+            // 进入强拖状态前的初始化
+            EQep1Regs.QCLR.bit.IEL = 1;  // 清除之前的 Index 锁存标志
       break;
 
       // 读电流零位
@@ -180,8 +187,29 @@ __interrupt void adc_isr(void)
       // 双闭环
       case STATE_RUN:
       {
-              float raw_elec = Get_Electrical_Angle();
-              foc.Theta = raw_elec - zero_offset_rad;    // 读取真实角度
+          if ( RunMode == 0 )
+          {   foc.Theta = foc.Theta + angle_step;
+              // 检查是否撞到了索引(Z)脉冲
+              if (EQep1Regs.QFLG.bit.IEL == 1)
+              {
+                  // 太棒了！确认遇到了 Z 脉冲！
+                  // 1. 切换到闭环模式
+                  RunMode = 1;
+                  // 2. 别忘了把标志位清掉，为下一次运转做准备
+                  EQep1Regs.QCLR.bit.IEL = 1;
+              }
+
+          }
+          else
+          {
+              //float raw_elec = Get_Electrical_Angle();
+              //foc.Theta = raw_elec - zero_offset_rad;    // 读取真实角度
+              Calculate_QEP_Angle();
+
+          }
+
+
+
               // 扣除后可能出现负数，需要重新归一化到 0 ~ 2*PI
               while(foc.Theta < 0.0f) foc.Theta += 6.2831853f;
               while(foc.Theta >= 6.2831853f) foc.Theta -= 6.2831853f;
@@ -217,7 +245,7 @@ __interrupt void adc_isr(void)
             Run_PI(&pi_iq);
 
 
-            if (RxMsg_0x201_MDL.bit.Feedforward == 1)       // 根据CAN指令开关前馈、便于对比
+            if ( RxMsg_0x201_MDL.bit.Feedforward == 1 )       // 根据CAN指令开关前馈、便于对比
              {
                 float omega_e = speed_fdb;
                 float Vd_ff = -omega_e * MOTOR_LS * foc.Iq;
@@ -229,6 +257,7 @@ __interrupt void adc_isr(void)
             {
                 foc.Vd = pi_id.Out;
                 foc.Vq = pi_iq.Out;
+                if ( RunMode == 0 ) foc.Vq = 0.15; //开环I/f强拖时 给一个固定的Vq
             }
 
 
