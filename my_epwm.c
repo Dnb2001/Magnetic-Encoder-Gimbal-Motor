@@ -1,7 +1,7 @@
 #include "my_epwm.h"
 #include "my_adc.h"
 #include "my_foc.h"
-
+//#define TBPRD_ALL 7500
 #define TBPRD_ALL DSP_Sys_Clock_Freq / ( 2 * Current_Loop_Freq )
 #define TBPRD_init 0.5 * TBPRD_ALL     // 计数器初始值
 
