@@ -2,6 +2,7 @@
 #include "my_foc.h"
 #include "my_spi.h"
 #include "my_can.h"
+#include "my_qep.h"
 #include <stdint.h>
 #include "DSP2833x_Examples.h"   // DELAY_US 的宏定义在这里
 SYS_STATE_t sys_state = STATE_IDLE;
@@ -121,7 +122,7 @@ void Read_Phase_Currents(void)
     static Uint16 can_pack_cnt = 0; // 新增：CAN数据打包计数器
     float virtual_theta = 0;
     Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
-
+    Uint16 Cal_Offset_Flag;  // 对齐后 寻找QEP的offset
 __interrupt void adc_isr(void)
 {
     // 1. 基础数据采集 读取电流 (结果存入 m_current 结构体)
@@ -167,32 +168,32 @@ __interrupt void adc_isr(void)
 
       // 对齐
       case STATE_ALIGN:
-
-          if ( align_cnt < 20000 )
-           {   // main里正在运行对齐
-              foc.Vd = 0.6f;
-              foc.Vq = 0.0f;
-              foc.Theta = 0.0f; // 强行设电角度为 0
-              foc.SinVal = 0.0f; // sin(0)
-              foc.CosVal = 1.0f; // cos(0)
-              align_cnt++;
-           }
-          else {
-              zero_offset_rad = Get_Electrical_Angle();  // 电角度零位
-              sys_state = STATE_RUN;
-              align_cnt = 0; // 对齐结束 状态机改为运行双闭环
-          }
-      break;
-
-      // 双闭环
-      case STATE_RUN:
-      {
           if ( RunMode == 0 )
           {   foc.Theta = foc.Theta + angle_step;
               // 检查是否撞到了索引(Z)脉冲
               if (EQep1Regs.QFLG.bit.IEL == 1)
               {
-                  // 太棒了！确认遇到了 Z 脉冲！
+                  // 确认遇到了 Z 脉冲！
+                  // 对齐d轴 寻找QEP的offset
+                  if （ Cal_Offset_Flag == 0 ）
+                  {
+                    if ( align_cnt < 20000 )
+                    {   
+                        foc.Vd = 0.6f;
+                        foc.Vq = 0.0f;
+                        foc.Theta = 0.0f; // 强行设电角度为 0
+                        foc.SinVal = 0.0f; // sin(0)
+                        foc.CosVal = 1.0f; // cos(0)
+                        align_cnt++;
+                    }
+                    else 
+                    {
+                        QEP_Offset = EQep1Regs.QPOSCNT;  // 电角度零位
+                        sys_state = STATE_RUN;
+                        Cal_Offset_Flag == 0;  // 对齐d轴结束
+                        align_cnt = 0; // 对齐结束 状态机改为运行双闭环
+                    }
+                  }
                   // 1. 切换到闭环模式
                   RunMode = 1;
                   // 2. 别忘了把标志位清掉，为下一次运转做准备
@@ -201,19 +202,20 @@ __interrupt void adc_isr(void)
               }
 
           }
-          else
-          {
+          
+      break;
+
+      // 双闭环
+      case STATE_RUN:
+      {         
+         
               //float raw_elec = Get_Electrical_Angle();
               //foc.Theta = raw_elec - zero_offset_rad;    // 读取真实角度
               Calculate_QEP_Angle();
 
-          }
-
-
-
-              // 扣除后可能出现负数，需要重新归一化到 0 ~ 2*PI
-              while(foc.Theta < 0.0f) foc.Theta += 6.2831853f;
-              while(foc.Theta >= 6.2831853f) foc.Theta -= 6.2831853f;
+              // 扣除后可能出现负数，需要重新归一化到 0 ~ 2*PI  // 使用QEP读取角度时 在Calculate_QEP_Angle()已经归一化 无需再次归一化
+              // while(foc.Theta < 0.0f) foc.Theta += 6.2831853f;
+              // while(foc.Theta >= 6.2831853f) foc.Theta -= 6.2831853f;
               foc.SinVal = sinf(foc.Theta);
               foc.CosVal = cosf(foc.Theta);
               // --- 新增：500Hz 速度外环 ---
