@@ -197,6 +197,7 @@ __interrupt void adc_isr(void)
                   RunMode = 1;
                   // 2. 别忘了把标志位清掉，为下一次运转做准备
                   EQep1Regs.QCLR.bit.IEL = 1;
+                  // 再加一个if  如果第一次用电机 需要给Vd强拖 找offset的大小 状态机回到对齐 记录offset 然后回到双闭环
               }
 
           }
