@@ -122,7 +122,7 @@ void Read_Phase_Currents(void)
     static Uint16 can_pack_cnt = 0; // 新增：CAN数据打包计数器
     float virtual_theta = 0;
     Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
-    Uint16 Cal_Offset_Flag;  // 对齐后 寻找QEP的offset
+    Uint16 Cal_Offset_Flag = 0;  // 对齐后 寻找QEP的offset
 __interrupt void adc_isr(void)
 {
     // 1. 基础数据采集 读取电流 (结果存入 m_current 结构体)
@@ -149,10 +149,14 @@ __interrupt void adc_isr(void)
             pi_iq.Ref = 0;
             pi_spd.Ref = 0;
             pi_spd.Ui = 0; pi_spd.Out = 0; // <--- 必须加上！彻底清除速度环历史记忆
+
             virtual_theta = 0;
             RunMode = 0;
             // 进入强拖状态前的初始化
             EQep1Regs.QCLR.bit.IEL = 1;  // 清除之前的 Index 锁存标志
+            align_cnt = 0;
+            Cal_Offset_Flag = 0;
+
       break;
 
       // 读电流零位
@@ -161,25 +165,36 @@ __interrupt void adc_isr(void)
           Read_Phase_Current_Zero();     // 读取霍尔零位
           GpioDataRegs.GPBSET.bit.GPIO52 = 1;
           DELAY_US(5);
-          //sys_state = STATE_ALIGN;       // 自动跳到对齐
-          zero_offset_rad = 3.47715044;
-          sys_state = STATE_RUN;       // 跳过对齐 直接跑
+
+          //zero_offset_rad = 3.47715044;
+          // sys_state = STATE_RUN;       // 跳过对齐 直接跑
+          sys_state = STATE_ALIGN;       // 自动跳到对齐
       break;
 
       // 对齐
       case STATE_ALIGN:
           if ( RunMode == 0 )
-          {   foc.Theta = foc.Theta + angle_step;
+          {   // 虚拟角度 V/f 开环
+              foc.Theta = foc.Theta + angle_step;
+              foc.SinVal = sinf(foc.Theta);
+              foc.CosVal = cosf(foc.Theta);
+              foc.Vd = 0.0f;
+              foc.Vq = 0.6f;
+              Run_Clarke(&foc);
+              Run_Park(&foc);
               // 检查是否撞到了索引(Z)脉冲
               if (EQep1Regs.QFLG.bit.IEL == 1)
               {
                   // 确认遇到了 Z 脉冲！
                   // 对齐d轴 寻找QEP的offset
-                  if （ Cal_Offset_Flag == 0 ）
+                  sys_state = STATE_RUN;    //直接用已经标定好的offset
+                  Cal_Offset_Flag = 1;      //避免进入下面的标定
+                  QEP_Offset = 406;
+                  if ( Cal_Offset_Flag == 0 )  // 未标定零位时
                   {
                     if ( align_cnt < 20000 )
                     {   
-                        foc.Vd = 0.6f;
+                        foc.Vd = 1.2f;
                         foc.Vq = 0.0f;
                         foc.Theta = 0.0f; // 强行设电角度为 0
                         foc.SinVal = 0.0f; // sin(0)
@@ -189,16 +204,20 @@ __interrupt void adc_isr(void)
                     else 
                     {
                         QEP_Offset = EQep1Regs.QPOSCNT;  // 电角度零位
+                        foc.Vd = 0.0f;
+                        RunMode = 1;    // 1. 切换到闭环模式
                         sys_state = STATE_RUN;
-                        Cal_Offset_Flag == 0;  // 对齐d轴结束
-                        align_cnt = 0; // 对齐结束 状态机改为运行双闭环
+                        Cal_Offset_Flag = 1;  // 对齐d轴结束
+                        EQep1Regs.QCLR.bit.IEL = 1;     // 2. 别忘了把标志位清掉，为下一次运转做准备
+                        //align_cnt = 0; // 对齐结束 状态机改为运行双闭环
+                        pi_id.Ui = 0; pi_id.Out = 0;
+                        pi_iq.Ui = 0; pi_iq.Out = 0;
+                        pi_iq.Ref = 0;
+                        pi_spd.Ref = 0;
+                        pi_spd.Ui = 0; pi_spd.Out = 0; // <--- 必须加上！彻底清除速度环历史记忆
                     }
                   }
-                  // 1. 切换到闭环模式
-                  RunMode = 1;
-                  // 2. 别忘了把标志位清掉，为下一次运转做准备
-                  EQep1Regs.QCLR.bit.IEL = 1;
-                  // 再加一个if  如果第一次用电机 需要给Vd强拖 找offset的大小 状态机回到对齐 记录offset 然后回到双闭环
+
               }
 
           }
@@ -226,8 +245,8 @@ __interrupt void adc_isr(void)
                                   // 1. 计算实际速度
                                   speed_fdb = Calculate_Speed(foc.Theta);
                                   // 2. 运行速度 PI
-                                  pi_spd.Ref = speed_target;
-                                  pi_spd.Fdb = speed_fdb;
+                                  pi_spd.Ref = speed_target; // 电角速度
+                                  pi_spd.Fdb = -speed_fdb;
                                   Run_PI(&pi_spd);
                                   // 3. 速度环的输出，直接作为电流环的目标值！
                                   pi_iq.Ref = pi_spd.Out;
@@ -260,7 +279,6 @@ __interrupt void adc_isr(void)
             {
                 foc.Vd = pi_id.Out;
                 foc.Vq = pi_iq.Out;
-                if ( RunMode == 0 ) foc.Vq = 0.15; //开环I/f强拖时 给一个固定的Vq
             }
 
 
