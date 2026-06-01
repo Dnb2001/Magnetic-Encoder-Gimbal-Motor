@@ -5,10 +5,10 @@
 #include <math.h>
 #define SQRT3_INV   0.577350269f
 // --- 电机物理参数定义 ---
-#define MOTOR_RS     0.32f       // 相电阻 (欧姆)
-#define MOTOR_LS     0.00145f    // 相电感 Ld = Lq = 50uH (亨利，注意单位！)
-#define MOTOR_FLUX   0.0021f     // 永磁体磁链 (韦伯)
-#define MOTOR_Pole_pairs 7.0f    // 极对数
+#define MOTOR_RS     0.3276f       // 相电阻 (欧姆)
+#define MOTOR_LS     0.000288f    // 相电感 Ld = Lq = 50uH (亨利，注意单位！)
+#define MOTOR_FLUX   0.005885f     // 永磁体磁链 (韦伯)
+#define MOTOR_Pole_pairs 4.0f    // 极对数
 #define Current_Loop_Freq 10000.0f  //  电流环频率
 #define DSP_Sys_Clock_Freq 150000000  //  F28335系统时钟频率
 extern Uint16 run_flag;      //
