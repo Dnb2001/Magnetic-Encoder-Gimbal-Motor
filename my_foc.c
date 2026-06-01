@@ -6,7 +6,7 @@ PI_CONTROLLER pi_id = {0};
 PI_CONTROLLER pi_iq = {0};
 
 PI_CONTROLLER pi_spd = {0};
-float speed_target = 3.0f;   // 给一个初始测试目标转速 (电角速度 rad/s)
+float speed_target = 5.0f;   // 给一个初始测试目标转速 (电角速度 rad/s)
 float speed_fdb = 0.0f;
 
 // 定义全局的补偿电压变量
@@ -116,26 +116,26 @@ void Init_Control_Vars(void)
     angle_step = 6.2831853f * freq_target_hz * TPWM;
 
     // 2. 配置 D轴 PI 参数 (控制磁通/无功)
-    pi_id.Kp = 1.5f;        // 试探值
-    pi_id.Ki = 0.05f;
+    pi_id.Kp = 0.9f;        // 试探值
+    pi_id.Ki = 0.1f;
     pi_id.OutMax = 2.0f;   // 输出电压限幅 (根据你的母线电压，例如 24V 母线一半是 12V)
     pi_id.OutMin = -2.0f;
 
     // 3. 配置 Q轴 PI 参数 (控制转矩/有功)
-    pi_iq.Kp = 1.5f;
-    pi_iq.Ki = 0.05f;
-    pi_iq.OutMax = 2.0f;
-    pi_iq.OutMin = -2.0f;
+    pi_iq.Kp = 0.9f;
+    pi_iq.Ki = 0.1f;
+    pi_iq.OutMax = 1.5f;
+    pi_iq.OutMin = -1.5f;
 
     // 4. 清零中间变量
     foc.Theta = 0;
     foc.Id = 0; foc.Iq = 0;
 
     // 速度环通常 Kp 大一些，Ki 小一些
-        pi_spd.Kp = 0.02f;      // 试探值，后续可能需要根据负载转动惯量调整
+        pi_spd.Kp = 0.03f;      // 试探值，后续可能需要根据负载转动惯量调整
         pi_spd.Ki = 0.001f;
-        pi_spd.OutMax = 0.8f;   // ！！速度环的输出限幅，就是允许电机输出的最大 Iq 电流 (安培) ！！
-        pi_spd.OutMin = -0.8f;  // 允许最大 1.5A 的刹车/反转电流
+        pi_spd.OutMax = 0.75f;   // ！！速度环的输出限幅，就是允许电机输出的最大 Iq 电流 (安培) ！！
+        pi_spd.OutMin = -0.75f;  // 允许最大 1.5A 的刹车/反转电流
 }
 
 // 对齐
