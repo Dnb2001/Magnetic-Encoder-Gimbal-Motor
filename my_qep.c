@@ -163,7 +163,7 @@ void InitEQep1_AS5047P(void)
     EQep1Regs.QEPCTL.bit.QPEN = 1;        // 全面使能 eQEP1 模块开始工作
 }
 
-    int32 QEP_offset = 0;       // 使用有符号 32 位整型
+    int32 QEP_Offset = 0;       // 使用有符号 32 位整型
     float QEP_Mech_Theta = 0.0f;  // QEP 机械角度
     float QEP_Elc_Theta = 0.0f;   // QEP 电角度
     // 定义你的物理磁极安装夹角 (QEP 比 SPI 大 3.46)
@@ -177,7 +177,7 @@ void Calculate_QEP_Angle(void)
     int32 current_qpos = (int32)EQep1Regs.QPOSCNT;
 
     // 2. 计算相对 Z 脉冲的脉冲差值
-    //int32 delta_pos =  QEP_offset - current_qpos;
+    int32 delta_pos =  current_qpos - QEP_Offset ;
 
     // 3. 处理跨越 0 或 3999 时的物理绕回
     // （假设顺时针转一圈后，delta_pos 会超过 4000，逆时针会小于 0）
@@ -191,7 +191,7 @@ void Calculate_QEP_Angle(void)
     }*/
 
     // 4. 计算机械角度 (弧度)
-    QEP_Mech_Theta = (float)current_qpos * (-6.2831853f / 4000.0f);
+    QEP_Mech_Theta = (float)delta_pos * (-6.2831853f / 4000.0f);
 
     // 5. 计算电角度 = 机械角度 * 极对数
     QEP_Elc_Theta = ( QEP_Mech_Theta * MOTOR_Pole_pairs ) - CONST_MAGNETIC_OFFSET ;
