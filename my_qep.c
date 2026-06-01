@@ -194,7 +194,7 @@ void Calculate_QEP_Angle(void)
     QEP_Mech_Theta = (float)current_qpos * (-6.2831853f / 4000.0f);
 
     // 5. 计算电角度 = 机械角度 * 极对数
-    QEP_Elc_Theta = ( QEP_Mech_Theta * 7.0f ) - CONST_MAGNETIC_OFFSET ;
+    QEP_Elc_Theta = ( QEP_Mech_Theta * MOTOR_Pole_pairs ) - CONST_MAGNETIC_OFFSET ;
 
     // 6. 将电角度归一化到 0 ~ 2*PI 之间
     // （因为乘了 7，所以结果可能会达到 14*PI，必须把多余的圈数去掉）

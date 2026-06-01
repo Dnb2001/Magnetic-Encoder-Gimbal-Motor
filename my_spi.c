@@ -153,7 +153,7 @@ float Get_Electrical_Angle(void) {
 
     // ¼ÆËã´¿¾»»¡¶È (0 ~ 2*PI)
     float mech_rad = (float)raw_data * 6.2831853f / 16384.0f;
-    float elec_rad = mech_rad * 7.0f;
+    float elec_rad = mech_rad * MOTOR_Pole_pairs;
 
     while(elec_rad >= 6.2831853f) elec_rad -= 6.2831853f;
 
