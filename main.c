@@ -75,6 +75,7 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
     Clear_AS5047P_Error();
     Init_eCANB_Config();
     InitEQep1_AS5047P();
+    InitHallGpio();         // 配置GPIO24 25 26为普通GPIO 输入 开启上拉电阻
 //  -- 配置 GPIO 引脚 功能
     EALLOW;
     GpioCtrlRegs.GPAMUX1.bit.GPIO0 = 1;      // GPIO0 -> EPWM1A

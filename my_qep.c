@@ -211,3 +211,56 @@ void Calculate_QEP_Angle(void)
     //qep_spi = QEP_Elc_Theta - foc.Theta;
     // 现在，你可以在 Expressions 里安全地把 QEP_Elc_Theta 和你的 SPI 角度进行对比了！
 }
+void InitHallGpio(void)
+{
+    EALLOW; // 解锁受保护的配置寄存器
+
+    // ==========================================
+    // 步骤 1：使能内部上拉电阻 (给信号线绑上3.3V的吊绳)
+    // ==========================================
+    // GPAPUD 控制 GPIO0 到 GPIO31
+    // 0 = 开启内部上拉 (Pull-up Enable)
+    // 1 = 禁用内部上拉
+    GpioCtrlRegs.GPAPUD.bit.GPIO24 = 0; // 开启 GPIO24 (HALL_U) 上拉
+    GpioCtrlRegs.GPAPUD.bit.GPIO25 = 0; // 开启 GPIO25 (HALL_V) 上拉
+    GpioCtrlRegs.GPAPUD.bit.GPIO26 = 0; // 开启 GPIO26 (HALL_W) 上拉
+
+
+    // ==========================================
+    // 步骤 2：配置为普通功能 (不复用为 eQEP 或其他外设)
+    // ==========================================
+    // GPAMUX2 控制 GPIO16 到 GPIO31
+    // 00 = 普通数字 I/O 功能
+    // 01, 10, 11 = 复用为其他外设功能（例如 01 是复用为 eQEP1）
+    GpioCtrlRegs.GPAMUX2.bit.GPIO24 = 0; // 配置为普通 GPIO
+    GpioCtrlRegs.GPAMUX2.bit.GPIO25 = 0; // 配置为普通 GPIO
+    GpioCtrlRegs.GPAMUX2.bit.GPIO26 = 0; // 配置为普通 GPIO
+
+
+    // ==========================================
+    // 步骤 3：配置引脚方向为“输入”
+    // ==========================================
+    // GPADIR 控制方向：0 = 输入 (Input)，1 = 输出 (Output)
+    GpioCtrlRegs.GPADIR.bit.GPIO24 = 0; // GPIO24 作为输入
+    GpioCtrlRegs.GPADIR.bit.GPIO25 = 0; // GPIO25 作为输入
+    GpioCtrlRegs.GPADIR.bit.GPIO26 = 0; // GPIO26 作为输入
+
+
+    // ==========================================
+    // 步骤 4【核心抗干扰】：配置硬件数字滤波器 (Qualification)
+    // ==========================================
+    // 告诉 DSP：这三个脚输入的数据不能来个毛刺就立刻认账，必须连续检查 6 次采样电平都一样，才认为信号真的变了
+    // 4.1 设置采样窗大小：让它使用 6 个采样的窗口进行滤波
+    // 10 = 6采样窗口 (6-sample window)
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO24 = 2;
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO25 = 2;
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO26 = 2;
+
+    // 4.2 设置采样时钟分频 (GPACTRL)
+    // 规定滤波采样时钟的间隔，防止由于高频噪声引起连续 6 次误判
+    // 这里的数字越长，滤波时间越长，抗低频干扰越强，但会引入微秒级的检测延时
+    // 0x0A 代表将系统时钟分频，这对于 10kHz~20kHz 的霍尔换相信号来说非常安全且干净
+    GpioCtrlRegs.GPACTRL.bit.QUALPRD3 = 0x0A; // 控制 GPIO24-31 的滤波采样周期
+
+    EDIS; // 重新锁死受保护的寄存器
+}
