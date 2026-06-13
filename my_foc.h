@@ -74,7 +74,7 @@ typedef enum {
     STATE_RUN = 3,       // 运行：双闭环闭环旋转
     STATE_FAULT = 4      // 故障：发生错误，紧急停机
 } SYS_STATE_t;
-extern SYS_STATE_t sys_state; // 全局状态变量
+extern volatile SYS_STATE_t sys_state; // 全局状态变量
 
 extern FOC_Handle foc;
 extern PI_CONTROLLER pi_id;

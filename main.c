@@ -22,7 +22,8 @@ AS5047_FRAME_t debug_frame;
 extern Uint16 RamfuncsLoadStart;
 extern Uint16 RamfuncsLoadEnd;
 extern Uint16 RamfuncsRunStart;
-
+extern Uint16 RunMode = 0;
+volatile SYS_STATE_t sys_state = STATE_IDLE;     // 定义状态机 分配空间
 void ClearTzFault(void)
 {
     EALLOW;
@@ -34,17 +35,69 @@ void ClearTzFault(void)
     EDIS;
 }
 
+void StateMachine_Task(void)
+{
+    switch(sys_state)
+    {
+        case STATE_IDLE:        // can改命令  这里收到命令后进入下一步
+        {
+            if ( RxMsg_0x201_MDL.bit.IR2136_EN == 1  )
+            {
+                RunMode = 0;
+                sys_state = STATE_CALIB;    // 从can接收函数里转移到专门的状态机函数  会不会中断里跑一半 状态改了  但是中断优先级高 改状态肯定不在中断里
+            }
+         break;
+        }
+
+        case STATE_CALIB:
+        {
+            // 读取电流零位  读取结束后 跳转到对齐
+            GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;   // 此处关使能是否合理？
+            Read_Phase_Current_Zero();     // 读取霍尔零位
+            GpioDataRegs.GPBSET.bit.GPIO52 = 1;
+            DELAY_US(5);
+            sys_state = STATE_ALIGN;       // 自动跳到对齐
+        break;
+        }
+
+        case STATE_ALIGN:
+        {
+            if ( RunMode == 1  )
+            {
+                //sys_state = STATE_RUN;
+            }
+        break;
+        }
+
+        case STATE_RUN:
+        {
+            if ( RxMsg_0x201_MDL.bit.IR2136_EN == 0  )
+            {
+                sys_state = STATE_IDLE;
+            }
+        break;
+        }
+
+        case STATE_FAULT:
+        {
+            // ADC_isr里有对应处理 处理速度更快
+            // 暂时不做退出故障状态的判断  默认必须重新上电
+        }
+        break;
+    }
+
+}
 
 Uint32 spi_err_cnt = 0;  // SPI 误码计数器
 void main(void)
 {
     fault_flag = 0;
     angle_step = freq_target_hz * 2 * 3.1415f * TPWM;      // 角度增量
-InitSysCtrl();              //系统初始化
-InitPieCtrl();              // 初始化 PIE 控制寄存器到默认状态
+    InitSysCtrl();              //系统初始化
+    InitPieCtrl();              // 初始化 PIE 控制寄存器到默认状态
     IER = 0x0000;           // 禁用 CPU 中断
     IFR = 0x0000;           // 清除 CPU 中断标志
-InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
+    InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
 
 // --- 第二步：重映射中断向量 ---
     EALLOW;
@@ -133,18 +186,17 @@ InitPieVectTable();         // 初始化 PIE 向量表（默认映射）
 
     command = 0x3FFF;
 
-while(1)
-{
-    //ClearTzFault();
-    //fault_flag = 0;
-    //DELAY_US(10000);
-    Check_CAN_Receive();
-    //can_send_flag = Send_Message_WithTimeout();
-    // 接收可以一直轮询，因为不怎么耗时
-            Check_CAN_Receive();
+    while(1)
+    {
+        //ClearTzFault();
+        //fault_flag = 0;
 
-            // 检查是否有 10ms 快照数据准备好
-            if (can_tx_ready_flag == 1)
+        //can_send_flag = Send_Message_WithTimeout();
+        // 接收可以一直轮询，因为不怎么耗时
+        Check_CAN_Receive();
+        StateMachine_Task();  // 状态机
+        // 检查是否有 10ms 快照数据准备好
+        if (can_tx_ready_flag == 1)
             {
                 // 【进阶技巧：临界区保护】
                 // 在把内存里的 TxMsg 搬运到 CAN 硬件寄存器的这几微秒内，
@@ -163,8 +215,10 @@ while(1)
                 can_tx_ready_flag = 0;
             }
 
-}
+       }
 
 
 }
+
+
 

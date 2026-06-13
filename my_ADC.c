@@ -5,7 +5,7 @@
 #include "my_qep.h"
 #include <stdint.h>
 #include "DSP2833x_Examples.h"   // DELAY_US 的宏定义在这里
-SYS_STATE_t sys_state = STATE_IDLE;
+
 // 定义全局变量实例
 MOTOR_CURRENT m_current = {0.0f, 0.0f, 0.0f};
 
@@ -121,7 +121,7 @@ void Read_Phase_Currents(void)
     static Uint16 speed_loop_cnt = 0; // 新增：速度环计数器
     static Uint16 can_pack_cnt = 0; // 新增：CAN数据打包计数器
     float virtual_theta = 0;
-    Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
+    //Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
     Uint16 Cal_Offset_Flag = 0;  // 对齐后 寻找QEP的offset
 __interrupt void adc_isr(void)
 {
@@ -151,7 +151,7 @@ __interrupt void adc_isr(void)
             pi_spd.Ui = 0; pi_spd.Out = 0; // <--- 必须加上！彻底清除速度环历史记忆
 
             virtual_theta = 0;
-            RunMode = 0;
+            
             // 进入强拖状态前的初始化
             EQep1Regs.QCLR.bit.IEL = 1;  // 清除之前的 Index 锁存标志
             align_cnt = 0;
@@ -161,6 +161,7 @@ __interrupt void adc_isr(void)
 
       // 读电流零位
       case STATE_CALIB:
+        /*
           GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
           Read_Phase_Current_Zero();     // 读取霍尔零位
           GpioDataRegs.GPBSET.bit.GPIO52 = 1;
@@ -169,6 +170,7 @@ __interrupt void adc_isr(void)
           //zero_offset_rad = 3.47715044;
           // sys_state = STATE_RUN;       // 跳过对齐 直接跑
           sys_state = STATE_ALIGN;       // 自动跳到对齐
+        */
       break;
 
       // 对齐
@@ -187,9 +189,10 @@ __interrupt void adc_isr(void)
               {
                   // 确认遇到了 Z 脉冲！
                   // 对齐d轴 寻找QEP的offset
-                  sys_state = STATE_RUN;    //直接用已经标定好的offset
-                  Cal_Offset_Flag = 1;      //避免进入下面的标定
-                  QEP_Offset = 406;
+                  //sys_state = STATE_RUN;    //直接用已经标定好的offset
+                  Cal_Offset_Flag = 0;      //避免进入下面的标定
+                  //QEP_Offset = 406;
+                  RunMode = 0;    // 1. 切换到闭环模式
                   if ( Cal_Offset_Flag == 0 )  // 未标定零位时
                   {
                     if ( align_cnt < 20000 )
@@ -209,7 +212,7 @@ __interrupt void adc_isr(void)
                         sys_state = STATE_RUN;
                         Cal_Offset_Flag = 1;  // 对齐d轴结束
                         EQep1Regs.QCLR.bit.IEL = 1;     // 2. 别忘了把标志位清掉，为下一次运转做准备
-                        //align_cnt = 0; // 对齐结束 状态机改为运行双闭环
+                        align_cnt = 0; // 对齐结束 状态机改为运行双闭环
                         pi_id.Ui = 0; pi_id.Out = 0;
                         pi_iq.Ui = 0; pi_iq.Out = 0;
                         pi_iq.Ref = 0;
@@ -252,7 +255,7 @@ __interrupt void adc_isr(void)
                                   pi_iq.Ref = pi_spd.Out;
                               }
 
-            // --- B. 正变换 (Feedback) ---
+            // --- 正变换 (Feedback) ---  将采集到的Ia和Ib 变换为Id和Iq 提供给电流环PI的反馈端
             Run_Clarke(&foc);
             Run_Park(&foc);
 

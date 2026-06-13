@@ -113,11 +113,8 @@ void Check_CAN_Receive(void)
        // RxMsg_0x201_MDH.all = SWAP_BYTES32(raw_mdh);
 
         // 2. 标志位处理 (现在对应 bit 0-2 了)
-        if (RxMsg_0x201_MDL.bit.IR2136_EN == 1 && sys_state == STATE_IDLE )
-         {
-            sys_state = STATE_CALIB;
-          }
-        if (RxMsg_0x201_MDL.bit.IR2136_EN == 0  ) sys_state = STATE_IDLE;
+
+
 
         // 3. 核心修复：手动拼接转速 (High << 8 | Low)
         Uint16 raw_speed = ((Uint16)RxMsg_0x201_MDL.bit.Speed_Ref_H << 8) |
