@@ -193,6 +193,7 @@ void main(void)
 
         //can_send_flag = Send_Message_WithTimeout();
         // 接收可以一直轮询，因为不怎么耗时
+        Read_Phase_Currents();
         Check_CAN_Receive();
         StateMachine_Task();  // 状态机
         // 检查是否有 10ms 快照数据准备好

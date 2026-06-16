@@ -7,7 +7,7 @@
 #include "DSP2833x_Examples.h"   // DELAY_US 的宏定义在这里
 
 // 定义全局变量实例
-MOTOR_CURRENT m_current = {0.0f, 0.0f, 0.0f};
+MOTOR_CURRENT m_current = {0.0f, 0.0f, 0.0f, 0.0f};
 
 float32 ia_offset = 0.0f;       // 三相霍尔零位
 float32 ib_offset = 0.0f;
@@ -98,23 +98,25 @@ void InitAdc_User(void)
 }
 
 // 读取并转换电流 (将在中断中调用)
-float raw_Ia, raw_Ib, raw_Ic;       // ADC读取结果寄存器右移4位的结果  右移：12bit的值在16bit寄存器的高12位，所以需要右移
+float raw_Ia, raw_Ib, raw_Ic,raw_Udc;       // ADC读取结果寄存器右移4位的结果  右移：12bit的值在16bit寄存器的高12位，所以需要右移
 void Read_Phase_Currents(void)
 {
     // 1. 读取原始寄存器值 (F28335 的结果是左对齐的，需要右移 4 位)
     // 只有当程序在 FLASH 运行时通常才需要检查 ADC 忙状态，但在 ISR 里通常转换已完成
-    raw_Ia =  AdcRegs.ADCRESULT0 >> 4  ;
+    raw_Ia =  AdcRegs.ADCRESULT0 >> 4 ;
     raw_Ib =  AdcRegs.ADCRESULT1 >> 4 ;
     raw_Ic =  AdcRegs.ADCRESULT2 >> 4 ;
+    raw_Udc =  AdcRegs.ADCRESULT3 >> 4 ;
 #warning "这里为什么去掉滤波"
     //raw_Ia = ( AdcRegs.ADCRESULT0 >> 4 ) *0.2f + 0.8f * raw_Ia;
     //raw_Ib = ( AdcRegs.ADCRESULT1 >> 4 ) *0.2f + 0.8f * raw_Ib;
     //raw_Ic = ( AdcRegs.ADCRESULT2 >> 4 ) *0.2f + 0.8f * raw_Ic;
     // 2. 转换为真实物理量 (y = k * (x - b))
     // 注意：这里使用了 float 运算
-    m_current.Ia = (ia_offset - (float)raw_Ia) * ADC_SCALE  ;
-    m_current.Ib = (ib_offset - (float)raw_Ib) * ADC_SCALE  ;
-    m_current.Ic = (ic_offset - (float)raw_Ic) * ADC_SCALE  ;
+    m_current.Ia = (ia_offset - (float)raw_Ia) * ADC_SCALE_CURRENT  ;
+    m_current.Ib = (ib_offset - (float)raw_Ib) * ADC_SCALE_CURRENT  ;
+    m_current.Ic = (ic_offset - (float)raw_Ic) * ADC_SCALE_CURRENT  ;
+    m_current.Udc = (float)raw_Udc * ADC_SCALE_Volt;
 }
 
 #warning "这里为什么用static"
