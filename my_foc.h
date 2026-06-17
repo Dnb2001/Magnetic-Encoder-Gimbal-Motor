@@ -76,6 +76,8 @@ typedef enum {
 } SYS_STATE_t;
 extern volatile SYS_STATE_t sys_state; // 全局状态变量
 
+
+
 extern FOC_Handle foc;
 extern PI_CONTROLLER pi_id;
 extern PI_CONTROLLER pi_iq;

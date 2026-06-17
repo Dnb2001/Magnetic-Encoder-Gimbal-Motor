@@ -11,7 +11,7 @@
 //#define ADC_OFFSET_B    2286.0f   // B相偏置值
 //#define ADC_OFFSET_C    2286.0f   // B相偏置值
 #define ADC_SCALE_CURRENT       0.0111f     // 比例系数 (Amps per Count) = 3.0V / 4096 / 运放放大倍数 / 采样电阻
-#define ADC_SCALE_Volt          0.01463f
+#define ADC_SCALE_Volt          0.01463f    // 电压采集的比例系数
 // --- 定义电流数据结构体 ---
 typedef struct {
     float Ia;   // A相真实电流 (Amps)
