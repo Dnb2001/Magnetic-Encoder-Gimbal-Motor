@@ -7,6 +7,10 @@
 #include "my_spi.h"
 #include "my_can.h"
 #include "my_qep.h"
+#include "Diagnostic.h"
+#include "CANIF.h"
+#include "IsoTp.h"
+#include "UDS.h"
 Uint16 run_flag = 0;      // 1: 开始呼吸, 0: 停止呼吸
 Uint16 mode = 0;          // 0: 自动呼吸模式, 1: 手动调节模式
 
@@ -91,7 +95,7 @@ void StateMachine_Task(void)
 Uint32 spi_err_cnt = 0;  // SPI 误码计数器
 void main(void)
 {
-    fault_flag = 0;
+     fault_flag = 0;
     angle_step = freq_target_hz * 2 * 3.1415f * TPWM;      // 角度增量
     InitSysCtrl();              //系统初始化
     InitPieCtrl();              // 初始化 PIE 控制寄存器到默认状态
@@ -127,6 +131,7 @@ void main(void)
     Init_Spia_AS5047P();
     Clear_AS5047P_Error();
     Init_eCANB_Config();
+    Diagnostic_Init();
     InitEQep1_AS5047P();
     InitHallGpio();         // 配置GPIO24 25 26为普通GPIO 输入 开启上拉电阻
 //  -- 配置 GPIO 引脚 功能
@@ -186,6 +191,7 @@ void main(void)
 
     command = 0x3FFF;
 
+
     while(1)
     {
         //ClearTzFault();
@@ -196,6 +202,7 @@ void main(void)
         Read_Phase_Currents();
         Check_CAN_Receive();
         StateMachine_Task();  // 状态机
+        CANIF_RxISRHandler();
         // 检查是否有 10ms 快照数据准备好
         if (can_tx_ready_flag == 1)
             {
@@ -207,15 +214,21 @@ void main(void)
                 ECanbMboxes.MBOX1.MDH.all = SWAP_BYTES32(TxMsg_101_MDH.all);
                 ECanbMboxes.MBOX2.MDL.all = SWAP_BYTES32(TxMsg_102_MDL.all);
                 ECanbMboxes.MBOX2.MDH.all = SWAP_BYTES32(TxMsg_102_MDH.all);
+                ECanbMboxes.MBOX5.MDL.all = SWAP_BYTES32(TxMsg_103_MDL.all);
                 EINT;
 
                 // 触发硬件发送 (邮箱2)
                 ECanbRegs.CANTRS.bit.TRS1 = 1;
                 ECanbRegs.CANTRS.bit.TRS2 = 1;
+                ECanbRegs.CANTRS.bit.TRS5 = 1;
                 // 清除标志位，等待下一个 10ms
                 can_tx_ready_flag = 0;
             }
-
+        if (uds_flag == 1)
+            {
+            Diagnostic_Task1ms();
+            uds_flag = 0;
+            }
        }
 
 

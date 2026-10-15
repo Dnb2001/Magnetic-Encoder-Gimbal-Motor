@@ -117,7 +117,7 @@ int Check_Parity(Uint16 data) {
 
 Uint16 response ;
 Uint16 command; // 读 指令
-Uint16 Read_AS5047P_Raw(void)
+Uint16 Read_AS5047P_Raw(void)   // 需要加一个超时机制
 {
     // 【必须是 0xFFFF】: 读标志(1) + 偶校验标志(1) + 地址(0x3FFF)
     AS5047P_CS_LOW;
@@ -173,6 +173,7 @@ void Clear_AS5047P_Error(void)
 
     SpiaRegs.SPITXBUF = 0x4001;              // 发送清错指令
     while(SpiaRegs.SPIFFRX.bit.RXFFST < 1);  // 等待接收
+                                             // 需要加超时机制
     Uint16 dump = SpiaRegs.SPIRXBUF;         // 读出来丢弃即可，读这个动作本身就会清空 EF
 
     DELAY_US(1);

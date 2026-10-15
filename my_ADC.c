@@ -122,18 +122,40 @@ void Read_Phase_Currents(void)
 #warning "这里为什么用static"
     static Uint16 speed_loop_cnt = 0; // 新增：速度环计数器
     static Uint16 can_pack_cnt = 0; // 新增：CAN数据打包计数器
+    static Uint16 uds_cnt = 0; // 新增：UDS计数器
+    volatile Uint16 uds_flag = 0U; // 新增：UDS计数器
+    volatile Uint16 CAN_timeout_cnt = 0;
     float virtual_theta = 0;
     //Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
     Uint16 Cal_Offset_Flag = 0;  // 对齐后 寻找QEP的offset
+    float speed_rpm = 0;
 __interrupt void adc_isr(void)
 {
+    static Uint16 self_check_cnt = 0;
+    static Uint16 CAN_time_100us_cnt = 0;
+
     // 1. 基础数据采集 读取电流 (结果存入 m_current 结构体)
         Read_Phase_Currents();
         // 将采样到的物理值填入 FOC 结构体
         foc.Ia = m_current.Ia;
         foc.Ib = m_current.Ib;
         // foc.Ic = m_current.Ic; // FOC 计算只需要 Ia, Ib
-#warning "为什么只要Ia和Ib"
+
+        if ( m_current.Udc > 26.5 )
+        {
+            sys_state = STATE_FAULT;
+            TxMsg_103_MDL.bit.Over_Volt = 1;
+        }
+        else if ( m_current.Udc < 21.5 )
+        {
+            sys_state = STATE_FAULT;
+            TxMsg_103_MDL.bit.Lower_Volt = 1;
+        }
+        else
+        {
+            TxMsg_103_MDL.bit.Over_Volt = 0;
+            TxMsg_103_MDL.bit.Lower_Volt = 0;
+        }
 
   switch(sys_state)
   {
@@ -159,6 +181,16 @@ __interrupt void adc_isr(void)
             align_cnt = 0;
             Cal_Offset_Flag = 0;
 
+            // 周期自检
+            self_check_cnt++;
+            if ( self_check_cnt > 1000 )
+            {
+                self_check_cnt = 0;
+                if( (foc.Ia < -0.5f) ||  (foc.Ia > 0.5f)  || (foc.Ib < -0.5f)  ||  (foc.Ib > 0.5f) ) TxMsg_103_MDL.bit.Phase_sensor = 1;
+                else TxMsg_103_MDL.bit.Phase_sensor = 0;
+            }
+
+            // 位置传感器故障待增加
       break;
 
       // 读电流零位
@@ -183,7 +215,7 @@ __interrupt void adc_isr(void)
               foc.SinVal = sinf(foc.Theta);
               foc.CosVal = cosf(foc.Theta);
               foc.Vd = 0.0f;
-              foc.Vq = 0.6f;
+              foc.Vq = 0.9f;
               Run_Clarke(&foc);
               Run_Park(&foc);
               // 检查是否撞到了索引(Z)脉冲
@@ -249,6 +281,7 @@ __interrupt void adc_isr(void)
                                   speed_loop_cnt = 0;
                                   // 1. 计算实际速度
                                   speed_fdb = Calculate_Speed(foc.Theta);
+                                  speed_rpm = speed_fdb * 2.3873f;
                                   // 2. 运行速度 PI
                                   pi_spd.Ref = speed_target; // 电角速度
                                   pi_spd.Fdb = -speed_fdb;
@@ -345,6 +378,21 @@ __interrupt void adc_isr(void)
       // EPwm1Regs.ETCLR.bit.INT = 1;            // 这行不再需要了，因为我们没用 ePWM 中断
       // PieCtrlRegs.PIEACK.all = PIEACK_GROUP3; // 这行不再需要了，因为我们没用 ePWM 中断
 
+      CAN_time_100us_cnt++;
+      if ( CAN_time_100us_cnt > 999 )
+      {
+          CAN_time_100us_cnt = 0;
+          if( ECanbRegs.CANRMP.bit.RMP0 == 0 ) // 接收报文的标志为0
+          {
+              CAN_timeout_cnt++; // 一次100ms
+              if ( CAN_timeout_cnt > 30 )
+                  {
+                      TxMsg_103_MDL.bit.CAN_TimeOut = 1;  // 3s内没有通信 设置标志位
+                      CAN_timeout_cnt = 31;
+                  }
+          }
+      }
+
       can_pack_cnt++;
       if (can_pack_cnt > 99) // 200分频执行 10ms一次
       {
@@ -354,14 +402,19 @@ __interrupt void adc_isr(void)
           TxMsg_101_MDH.bit.Ic_Raw = (Uint16)((int16_t)(m_current.Ic * 100.0f));
 
           TxMsg_102_MDL.bit.Theta_Raw  = (Uint16)(foc.Theta * 100.0f);
-          TxMsg_102_MDL.bit.Speed_Raw  = (Uint16)((int16_t)(speed_fdb * 100.f));
+          TxMsg_102_MDL.bit.Speed_Raw  = (Uint16)(speed_rpm * 10.0f + 32767 );
           TxMsg_102_MDH.bit.Iq_Ref_Raw = (Uint16)((int16_t)(pi_iq.Ref * 100.0f));
           TxMsg_102_MDH.bit.Iq_Fdb_Raw = (Uint16)((int16_t)(foc.Iq * 100.0f));
 
           can_pack_cnt = 0;
           can_tx_ready_flag = 1;
       }
-
+      uds_cnt++;
+      if (uds_cnt > 99)
+      {
+          uds_cnt = 0;
+          uds_flag = 1;
+      }
 } // 中断函数结束
 
 void Read_Phase_Current_Zero(void)

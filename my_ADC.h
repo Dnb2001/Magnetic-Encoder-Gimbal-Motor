@@ -23,6 +23,8 @@ extern Uint16 RunMode;
 extern MOTOR_CURRENT m_current;
 extern volatile float zero_offset_rad;
 extern Uint16 can_tx_ready_flag;
+extern volatile Uint16 uds_flag;
+extern volatile Uint16 CAN_timeout_cnt;
 void InitAdc_User(void);       // 初始化 ADC 模块
 void Read_Phase_Currents(void); // 读取并转换电流
 void Read_Phase_Current_Zero(void);

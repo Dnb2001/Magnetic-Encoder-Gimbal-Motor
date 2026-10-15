@@ -1,13 +1,15 @@
 #include<my_can.h>
 #include<my_foc.h>
 #include <stdint.h>
-
+#include<my_adc.h>
 union CAN_RX_MSG_201_MDL RxMsg_0x201_MDL;
 //union CAN_RX_MSG_201_MDL RxMsg_0x201_MDH;
  union CAN_TX_MSG_101_MDL TxMsg_101_MDL;
  union CAN_TX_MSG_101_MDH TxMsg_101_MDH;
  union CAN_TX_MSG_102_MDL TxMsg_102_MDL;
  union CAN_TX_MSG_102_MDH TxMsg_102_MDH;
+ union CAN_TX_MSG_103_MDL TxMsg_103_MDL;
+ union CAN_TX_MSG_103_MDH TxMsg_103_MDH;
 Uint32 temp_mdl = 0x11223344;
 Uint32 temp_mdh = 0x11223344;
 
@@ -43,8 +45,7 @@ void Init_eCANB_Config(void)
     ECanbRegs.CANME.bit.ME0 = 0;            // 1. 修改前先禁用邮箱0
     ECanbRegs.CANME.bit.ME1 = 0;            //
     ECanbRegs.CANME.bit.ME2 = 0;
-    ECanbMboxes.MBOX0.MSGCTRL.bit.DLC = 8;
-    ECanbMboxes.MBOX0.MSGID.bit.IDE = 0;
+    ECanbRegs.CANME.bit.ME5 = 0;
 
     ECanbMboxes.MBOX0.MSGID.bit.STDMSGID = 0x201;
     ECanbMboxes.MBOX0.MSGID.bit.IDE = 0;      // 关键：设为 0 (标准帧)，否则收不到 11位 ID
@@ -61,10 +62,15 @@ void Init_eCANB_Config(void)
     ECanbMboxes.MBOX2.MSGID.bit.STDMSGID = 0x102;
     ECanbMboxes.MBOX2.MSGID.bit.IDE = 0;      // 关键：设为 0 (标准帧)，否则收不到 11位 ID
     ECanbMboxes.MBOX2.MSGID.bit.AME = 0;      // 关键：设为 0 (禁用屏蔽位)，只进行 ID 全匹配
+    ECanbMboxes.MBOX2.MSGCTRL.bit.RTR = 0;
     ECanbMboxes.MBOX2.MSGCTRL.bit.DLC = 8;
     ECanbRegs.CANME.bit.ME2 = 1;
-//    ECanbMboxes.MBOX3.MSGID.bit.STDMSGID = 0x103;
-//    ECanbRegs.CANME.bit.ME3 = 1;
+
+    ECanbMboxes.MBOX5.MSGID.bit.STDMSGID = 0x103;
+    ECanbMboxes.MBOX5.MSGID.bit.IDE = 0;
+    ECanbMboxes.MBOX5.MSGID.bit.AME = 0;
+    ECanbMboxes.MBOX5.MSGCTRL.bit.DLC = 8;
+    ECanbRegs.CANME.bit.ME5 = 1;
 
     EDIS;
 }
@@ -74,17 +80,12 @@ Uint16 Send_Message_WithTimeout(void) {
     Uint32 timeout_count = 0;
     const Uint32 MAX_TIMEOUT = 10000; // 根据主频调整，150MHz 下约几百微秒
 
-    // 1. 填充数据 (保持你之前的逻辑)
-
-    ECanbMboxes.MBOX1.MDL.all = temp_mdl;
-    ECanbMboxes.MBOX1.MDH.all = temp_mdh;
-    ECanbMboxes.MBOX2.MDL.all = temp_mdl;
-    ECanbMboxes.MBOX2.MDH.all = temp_mdh;
     // 2. 请求发送
     ECanbRegs.CANTRS.bit.TRS2 = 1;
     ECanbRegs.CANTRS.bit.TRS1 = 1;
+    ECanbRegs.CANTRS.bit.TRS5 = 1;
     // 3. 带超时的等待
-    while( (ECanbRegs.CANTA.bit.TA1 == 0) || (ECanbRegs.CANTA.bit.TA2 == 0) ) {
+    while( (ECanbRegs.CANTA.bit.TA1 == 0) || (ECanbRegs.CANTA.bit.TA2 == 0) || (ECanbRegs.CANTA.bit.TA5 == 0) ) {
         timeout_count++;
         if(timeout_count > MAX_TIMEOUT) {
             // 如果超时，通常是硬件没接好、波特率不对或没有 120 欧电阻
@@ -96,6 +97,7 @@ Uint16 Send_Message_WithTimeout(void) {
     // 4. 发送成功，清除标志
     ECanbRegs.CANTA.bit.TA1 = 1;
     ECanbRegs.CANTA.bit.TA2 = 1;
+    ECanbRegs.CANTA.bit.TA5 = 1;
     return CAN_SUCCESS;
 }
 
@@ -124,9 +126,11 @@ void Check_CAN_Receive(void)
         physical_speed = (int16_t)((int32_t)raw_speed - 32767);
         speed_target = physical_speed;
 
-
+        CAN_timeout_cnt = 0;
+        TxMsg_103_MDL.bit.CAN_TimeOut = 0;
 
         // 清除标志
         ECanbRegs.CANRMP.bit.RMP0 = 1;
+
     }
 }

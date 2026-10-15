@@ -72,9 +72,34 @@ union CAN_TX_MSG_102_MDH {
         Uint16 Iq_Fdb_Raw:16;   // Byte 6-7 (Signed, Factor 0.01)
     } bit;
 };
+// ==========================================
+// TX 报文 0x103: 故障数据
+// ==========================================
+union CAN_TX_MSG_103_MDL {
+    Uint32 all;
+    struct {
+        Uint16 CAN_TimeOut:1;
+        Uint16 Phase_sensor:1;
+        Uint16 Pos_sensor:1;
+        Uint16 Over_Volt:1;
+        Uint16 Lower_Volt:1;
+        Uint16 Phase:1;         // 预留缺相
+        Uint16 resver:10;
+    } bit;
+};
+union CAN_TX_MSG_103_MDH {
+    Uint32 all;
+    struct {
+        Uint16 resver:16;   // Byte 4-5 (Signed, Factor 0.01)
+        Uint16 resver1:16;   // Byte 6-7 (Signed, Factor 0.01)
+    } bit;
+};
+
 extern union CAN_RX_MSG_201_MDL RxMsg_0x201_MDL;
 extern union CAN_TX_MSG_101_MDL TxMsg_101_MDL;
 extern union CAN_TX_MSG_101_MDH TxMsg_101_MDH;
 extern union CAN_TX_MSG_102_MDL TxMsg_102_MDL;
 extern union CAN_TX_MSG_102_MDH TxMsg_102_MDH;
+extern union CAN_TX_MSG_103_MDL TxMsg_103_MDL;
+extern union CAN_TX_MSG_103_MDH TxMsg_103_MDH;
 #endif /* MY_CAN_H_ */
