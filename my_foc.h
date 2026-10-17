@@ -5,8 +5,8 @@
 #include <math.h>
 #define SQRT3_INV   0.577350269f
 // --- 电机物理参数定义 ---
-#define MOTOR_RS     0.3276f       // 相电阻 (欧姆)
-#define MOTOR_LS     0.000288f    // 相电感
+#define MOTOR_RS     0.347667f     // 新实测等效相电阻 (Ohm)
+#define MOTOR_LS     0.000286133f  // 新实测等效相电感 (H); 暂按Ld=Lq
 #define MOTOR_FLUX   0.005885f     // 永磁体磁链 (韦伯)
 #define MOTOR_Pole_pairs 4.0f    // 极对数
 #define Current_Loop_Freq 10000.0f  //  电流环频率
@@ -32,6 +32,29 @@ typedef struct {
     float  OutMax;   // 输出上限
     float  OutMin;   // 输出下限
 } PI_CONTROLLER;
+
+// ===== 电流环 Id 阶跃测试数据结构; CCS Expressions 观察 =====
+// 10kHz, 96点 (9.6ms): 16点零指令 + 48点0.20A + 32点零指令
+// 状态 0=未触发, 1=采集, 2=完成, 3=拒绝启动, 4=异常中止
+#define STEP_TEST_POINTS       96U
+#define STEP_TEST_PRE_POINTS   16U
+#define STEP_TEST_END_POINTS   64U
+#define STEP_TEST_ID_A         0.30f
+#define STEP_TEST_START_RPM    10.0f
+#define STEP_TEST_ABORT_RPM    40.0f
+#define STEP_TEST_ABORT_A      1.00f
+
+// 使用5个独立float数组, 方便在CCS的Graph / Memory Browser直接绘图。
+extern volatile Uint16 step_test_arm; // CCS手动写1启动一次测试
+extern volatile Uint16 step_test_status;
+extern volatile Uint16 step_test_count;
+extern volatile float step_test_id_ref[STEP_TEST_POINTS];
+extern volatile float step_test_id_fdb[STEP_TEST_POINTS];
+extern volatile float step_test_id_Ui[STEP_TEST_POINTS];
+extern volatile float step_test_id_Up[STEP_TEST_POINTS];
+//extern volatile float step_test_iq_fdb[STEP_TEST_POINTS];
+extern volatile float step_test_vd_cmd[STEP_TEST_POINTS];
+//extern volatile float step_test_vq_cmd[STEP_TEST_POINTS];
 
 // --- FOC 核心变量结构
 typedef struct {
@@ -95,6 +118,11 @@ void Run_PI(PI_CONTROLLER *pi);
 void Run_SVPWM_Simple(FOC_Handle *foc, float DC_Bus_Voltage);
 void Run_SVPWM_Real(FOC_Handle *foc, float V_Bus);
 void Init_Control_Vars(void); // 初始化foc参数
+void Calc_DeadTime_Comp(
+    FOC_Handle *foc,
+    float u_comp_max,
+    float i_thresh
+);
 
 float Calculate_Speed(float current_theta); // 速度计算函数
 #endif /* MY_FOC_H_ */

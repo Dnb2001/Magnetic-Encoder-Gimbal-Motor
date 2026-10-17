@@ -84,7 +84,8 @@ union CAN_TX_MSG_103_MDL {
         Uint16 Over_Volt:1;
         Uint16 Lower_Volt:1;
         Uint16 Phase:1;         // ‘§¡Ù»±œ‡
-        Uint16 resver:10;
+        Uint16 Dead_comp:1;
+        Uint16 resver:9;
     } bit;
 };
 union CAN_TX_MSG_103_MDH {

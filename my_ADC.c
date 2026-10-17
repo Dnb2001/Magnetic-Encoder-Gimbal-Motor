@@ -18,6 +18,7 @@ volatile Uint32 align_cnt = 0;  // 对齐过程计数
 volatile float zero_offset_rad = 0.0f;      // 机械角度零位
 volatile Uint16 debug_raw_data = 0; // 用来观察原始编码器值
 Uint16 can_tx_ready_flag = 0;   // 打包can数据给main发送
+float dead_comp = 0.24f;
 // 初始化 ADC 模块
 void InitAdc_User(void)
 {
@@ -136,8 +137,90 @@ void Read_Phase_Currents(void)
     static float32 sum_ib = 0.0f;
     static float32 sum_ic = 0.0f;
 
+// ===== RAM 阶跃记录: 仅用于调试, 不参与常规FOC运算 =====
+// 记录数组约 1920 字节; 若链接器提示.ebss溢出, 需调整其RAM分配。
+volatile Uint16 step_test_arm = 0U;
+volatile Uint16 step_test_status = 0U;
+volatile Uint16 step_test_count = 0U;
+volatile float step_test_id_ref[STEP_TEST_POINTS];
+volatile float step_test_id_fdb[STEP_TEST_POINTS];
+volatile float step_test_id_Ui[STEP_TEST_POINTS];
+volatile float step_test_id_Up[STEP_TEST_POINTS];
+//volatile float step_test_iq_fdb[STEP_TEST_POINTS];
+volatile float step_test_vd_cmd[STEP_TEST_POINTS];
+//volatile float step_test_vq_cmd[STEP_TEST_POINTS];
+static Uint16 step_test_hold_zero = 0U;
+
+static void StepTest_LeaveRun(void)
+{
+    if (step_test_status == 1U) step_test_status = 4U;
+    step_test_arm = 0U;
+    step_test_hold_zero = 0U;
+}
+
+static void StepTest_TryStart(void)
+{
+    if (step_test_arm != 1U) return;
+    step_test_arm = 0U; // 单次触发, 避免重复开始
+    if (step_test_hold_zero != 0U) return;
+
+    // 测速本身需已验证准确; 这里只是额外软件拦截, 不能替代硬件保护。
+    if ((g_qep_speed.mech_rpm > STEP_TEST_START_RPM) ||
+        (g_qep_speed.mech_rpm < -STEP_TEST_START_RPM) ||
+        (foc.Id > 0.40f) || (foc.Id < -0.40f) ||
+        (foc.Iq > 0.40f) || (foc.Iq < -0.40f) ||
+        (m_current.Udc < 21.5f) || (m_current.Udc > 26.5f))
+    {
+        step_test_status = 3U;
+        return;
+    }
+
+    step_test_count = 0U;
+    step_test_status = 1U;
+    step_test_hold_zero = 1U;
+    pi_id.Ui = 0.0f; pi_id.Out = 0.0f;
+    pi_iq.Ui = 0.0f; pi_iq.Out = 0.0f;
+    pi_spd.Ui = 0.0f; pi_spd.Out = 0.0f;
+}
+
+static Uint16 StepTest_IsUnsafe(void)
+{
+    if (step_test_status != 1U) return 0U;
+    if ((g_qep_speed.mech_rpm > STEP_TEST_ABORT_RPM) ||
+        (g_qep_speed.mech_rpm < -STEP_TEST_ABORT_RPM) ||
+        (foc.Id > STEP_TEST_ABORT_A) || (foc.Id < -STEP_TEST_ABORT_A) ||
+        (foc.Iq > STEP_TEST_ABORT_A) || (foc.Iq < -STEP_TEST_ABORT_A))
+    {
+        step_test_status = 4U;
+        step_test_hold_zero = 0U;
+        return 1U;
+    }
+    return 0U;
+}
+
+static void StepTest_CapturePoint(void)
+{
+    Uint16 k;
+    if (step_test_status != 1U) return;
+    k = step_test_count;
+    if (k >= STEP_TEST_POINTS) return;
+    step_test_id_ref[k] = pi_id.Ref;
+    step_test_id_fdb[k] = foc.Id;
+    step_test_id_Ui[k] = pi_id.Ui;
+    step_test_id_Up[k] = pi_id.Kp * pi_id.Err;
+    //step_test_iq_fdb[k] = foc.Iq;
+    step_test_vd_cmd[k] = foc.Vd;
+    //step_test_vq_cmd[k] = foc.Vq;
+    step_test_count = k + 1U;
+    if (step_test_count >= STEP_TEST_POINTS)
+    {
+        step_test_status = 2U;
+        // 仍保持独立电流环零指令模式，直到原有停机流程进入非RUN状态。
+    }
+}
+
 __interrupt void adc_isr(void)
-{   GpioDataRegs.GPASET.bit.GPIO26 = 1;
+{
     static Uint16 self_check_cnt = 0;
     static Uint16 CAN_time_100us_cnt = 0;
 
@@ -168,6 +251,7 @@ __interrupt void adc_isr(void)
   {
       // 待机
       case STATE_IDLE:
+            StepTest_LeaveRun();
             // 下管常通，上管常关（刹车）
             EPwm1Regs.CMPA.half.CMPA = 0;
             EPwm2Regs.CMPA.half.CMPA = 0;
@@ -202,6 +286,7 @@ __interrupt void adc_isr(void)
 
       // 读电流零位
       case STATE_CALIB:
+          StepTest_LeaveRun();
 
           GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
           if(offset_cnt < 1024)
@@ -229,6 +314,7 @@ __interrupt void adc_isr(void)
 
       // 对齐
       case STATE_ALIGN:
+           StepTest_LeaveRun();
           if ( RunMode == 0 )
           {   // 虚拟角度 V/f 开环
               foc.Theta = foc.Theta + angle_step;
@@ -312,20 +398,45 @@ __interrupt void adc_isr(void)
                   // 2. 运行速度 PI
                   pi_spd.Ref = speed_target;           // 仍保持你当前工程的“电角速度给定”语义
                   pi_spd.Fdb = -speed_fdb;             // 保留你当前工程已有的方向处理
-                  Run_PI(&pi_spd);
-
-                  // 3. 速度环输出作为 q 轴电流给定
-                  pi_iq.Ref = pi_spd.Out;
+                   // 阶跃采集和采集完成后, 禁止速度PI覆盖 Iq_ref。
+                   if (step_test_hold_zero == 0U)
+                   {
+                       Run_PI(&pi_spd);
+                       pi_iq.Ref = pi_spd.Out;
+                   }
               }
 
             // --- 正变换 (Feedback) ---  将采集到的Ia和Ib 变换为Id和Iq 提供给电流环PI的反馈端
-            Run_Clarke(&foc);
-            Run_Park(&foc);
+             Run_Clarke(&foc);
+             Run_Park(&foc);
 
-            // --- C. PI 控制器 (Control) ---
+             StepTest_TryStart();
+             if (StepTest_IsUnsafe() != 0U)
+             {
+                 // 使驱动器EN失效; 外部硬件过流/TZ保护必须独立可靠。
+                 sys_state = STATE_FAULT;
+                 GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
+                 break;
+             }
+
+             // --- C. PI 控制器 (Control) ---
             // D轴目标：通常锁定为 0
-            pi_id.Ref = 0.0f;
-            pi_id.Fdb = foc.Id;
+             if (step_test_hold_zero != 0U)
+             {
+                 // 0~15: 0A; 16~63: +0.20A; 64~95: 0A
+                 if ((step_test_status == 1U) &&
+                     (step_test_count >= STEP_TEST_PRE_POINTS) &&
+                     (step_test_count < STEP_TEST_END_POINTS))
+                     pi_id.Ref = STEP_TEST_ID_A;
+                 else
+                     pi_id.Ref = 0.0f;
+                 pi_iq.Ref = 0.0f;
+             }
+             else
+             {
+                 pi_id.Ref = 0.0f;
+             }
+             pi_id.Fdb = foc.Id;
             Run_PI(&pi_id);
 
             // Q轴
@@ -333,7 +444,7 @@ __interrupt void adc_isr(void)
             Run_PI(&pi_iq);
 
 
-            if ( RxMsg_0x201_MDL.bit.Feedforward == 1 )       // 根据CAN指令开关前馈、便于对比
+             if ((step_test_hold_zero == 0U) && (RxMsg_0x201_MDL.bit.Feedforward == 1))       // 根据CAN指令开关前馈、便于对比
              {
                 float omega_e = speed_fdb;
                 float Vd_ff = -omega_e * MOTOR_LS * foc.Iq;
@@ -348,10 +459,13 @@ __interrupt void adc_isr(void)
             }
 
 
-            break;
-            }
+             // 只记录本次采样和本次计算的电压指令, 并非真正施加电压。
+             StepTest_CapturePoint();
+             break;
+             }
 
       case STATE_FAULT:
+             StepTest_LeaveRun();
             // 故障状态：瞬间切断所有输出
             EPwm1Regs.CMPA.half.CMPA = 0; EPwm2Regs.CMPA.half.CMPA = 0; EPwm3Regs.CMPA.half.CMPA = 0;
             GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
@@ -366,16 +480,18 @@ __interrupt void adc_isr(void)
 
 
         // 利用 CAN 报文的 DeadZone 位来动态开关补偿 (1:开, 0:关)
-        if (RxMsg_0x201_MDL.bit.DeadZone == 1 && sys_state == STATE_RUN)
+        if ( RxMsg_0x201_MDL.bit.DeadZone == 1 && sys_state == STATE_RUN) //step_test_hold_zero == 0U &&
         {
          // 参数1：foc 句柄
          // 参数2：补偿电压 (u_comp_max)。算出来是 0.48V，但我们先打折，从 0.1V 开始试！
          // 参数3：指令电流的滞环阈值。设为 0.05A 即可过滤掉速度环的极小微扰。
-         Calc_DeadTime_Comp(&foc, 0.45f, 0.05f);
+         Calc_DeadTime_Comp(&foc, dead_comp, 0.05f);
+         TxMsg_103_MDL.bit.Dead_comp = 1;
         }
         else
         {
          // 关掉补偿或者处于对齐状态时，补偿量清零
+         TxMsg_103_MDL.bit.Dead_comp = 0;
          U_comp_A = 0.0f; U_comp_B = 0.0f; U_comp_C = 0.0f;
         }
         // 假设母线电压为 24V，生成占空比
@@ -443,8 +559,6 @@ __interrupt void adc_isr(void)
           uds_cnt = 0;
           uds_flag = 1;
       }
-      GpioDataRegs.GPACLEAR.bit.GPIO26 = 1;
-
 } // 中断函数结束
 
 void Read_Phase_Current_Zero(void)

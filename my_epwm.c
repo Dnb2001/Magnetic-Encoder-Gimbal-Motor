@@ -81,6 +81,9 @@ void InitEPwm1()  // ÖÜÆÚ ÏàÎ» ¼ÆÊýÆ÷³õÊ¼Öµ Ôö¼õÄ£Ê½ Ê±ÖÓ CMPA³õÖµ ¶¯×÷ ËÀÇø ´¥·
      *                              0£º¿ªÆôÓ°×Ó¼Ä´æÆ÷Ä£Ê½£¨Shadow Mode£©¡£
      *                              1£ºÁ¢¼´Ä£Ê½£¨Immediate Mode£©¡£
      */
+    // Ã÷È·Shadow + CTR=ZERO¸üÐÂ; Óëµ±Ç°CCSÊµ²âµÄ00ÅäÖÃÒ»ÖÂ¡£
+    EPwm1Regs.CMPCTL.bit.SHDWAMODE = 0;
+    EPwm1Regs.CMPCTL.bit.LOADAMODE = 0;
     EPwm1Regs.CMPA.half.CMPA = TBPRD_init;     // ³õÊ¼Õ¼¿Õ±È 50%
     // --- AQ ×ÓÄ£¿éÅäÖÃ (¶¨Òå PWM1A µÄ¶¯×÷) ---
     /*  AQ£¨Action-Qualifier£¬¶¯×÷ÏÞ¶¨£©×ÓÄ£¿é
@@ -158,6 +161,9 @@ void InitEPwm2()
     EPwm2Regs.TBCTL.bit.HSPCLKDIV = TB_DIV1;       // ÏµÍ³Ê±ÖÓ²»·ÖÆµ
     EPwm2Regs.TBCTL.bit.CLKDIV = TB_DIV1;
     // --- CC ×ÓÄ£¿éÅäÖÃ ---
+    // Ã÷È·Shadow + CTR=ZERO¸üÐÂ; Óëµ±Ç°CCSÊµ²âµÄ00ÅäÖÃÒ»ÖÂ¡£
+    EPwm2Regs.CMPCTL.bit.SHDWAMODE = 0;
+    EPwm2Regs.CMPCTL.bit.LOADAMODE = 0;
     EPwm2Regs.CMPA.half.CMPA = TBPRD_init;     // ³õÊ¼Õ¼¿Õ±È 50%
     // --- AQ ×ÓÄ£¿éÅäÖÃ (¶¨Òå PWM1A µÄ¶¯×÷) ---
     // ÏòÉÏ¼ÆÊýÊ±±È½ÏÆ¥ÅäÀ­µÍ£¬ÏòÏÂ¼ÆÊýÊ±±È½ÏÆ¥ÅäÀ­¸ß
@@ -185,6 +191,9 @@ void InitEPwm3()
     EPwm3Regs.TBCTL.bit.HSPCLKDIV = TB_DIV1;       // ÏµÍ³Ê±ÖÓ²»·ÖÆµ
     EPwm3Regs.TBCTL.bit.CLKDIV = TB_DIV1;
     // --- CC ×ÓÄ£¿éÅäÖÃ ---
+    // Ã÷È·Shadow + CTR=ZERO¸üÐÂ; Óëµ±Ç°CCSÊµ²âµÄ00ÅäÖÃÒ»ÖÂ¡£
+    EPwm3Regs.CMPCTL.bit.SHDWAMODE = 0;
+    EPwm3Regs.CMPCTL.bit.LOADAMODE = 0;
     EPwm3Regs.CMPA.half.CMPA = TBPRD_init;     // ³õÊ¼Õ¼¿Õ±È 50%
     // --- AQ ×ÓÄ£¿éÅäÖÃ (¶¨Òå PWM3A µÄ¶¯×÷) ---
     // ÏòÉÏ¼ÆÊýÊ±±È½ÏÆ¥ÅäÀ­µÍ£¬ÏòÏÂ¼ÆÊýÊ±±È½ÏÆ¥ÅäÀ­¸ß
