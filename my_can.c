@@ -50,12 +50,14 @@ void Init_eCANB_Config(void)
     ECanbMboxes.MBOX0.MSGID.bit.STDMSGID = 0x201;
     ECanbMboxes.MBOX0.MSGID.bit.IDE = 0;      // 关键：设为 0 (标准帧)，否则收不到 11位 ID
     ECanbMboxes.MBOX0.MSGID.bit.AME = 0;      // 关键：设为 0 (禁用屏蔽位)，只进行 ID 全匹配
+    ECanbMboxes.MBOX0.MSGCTRL.bit.RTR = 0;
     ECanbMboxes.MBOX0.MSGCTRL.bit.DLC = 8;
     ECanbRegs.CANME.bit.ME0 = 1;      //  重新使能邮箱 1
 
     ECanbMboxes.MBOX1.MSGID.bit.STDMSGID = 0x101;
     ECanbMboxes.MBOX1.MSGID.bit.IDE = 0;      // 关键：设为 0 (标准帧)，否则收不到 11位 ID
     ECanbMboxes.MBOX1.MSGID.bit.AME = 0;      // 关键：设为 0 (禁用屏蔽位)，只进行 ID 全匹配
+    ECanbMboxes.MBOX1.MSGCTRL.bit.RTR = 0;
     ECanbMboxes.MBOX1.MSGCTRL.bit.DLC = 8;
     ECanbRegs.CANME.bit.ME1 = 1;
 
@@ -69,6 +71,7 @@ void Init_eCANB_Config(void)
     ECanbMboxes.MBOX5.MSGID.bit.STDMSGID = 0x103;
     ECanbMboxes.MBOX5.MSGID.bit.IDE = 0;
     ECanbMboxes.MBOX5.MSGID.bit.AME = 0;
+    ECanbMboxes.MBOX5.MSGCTRL.bit.RTR = 0;
     ECanbMboxes.MBOX5.MSGCTRL.bit.DLC = 8;
     ECanbRegs.CANME.bit.ME5 = 1;
 

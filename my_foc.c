@@ -122,10 +122,10 @@ void Init_Control_Vars(void)
     pi_id.OutMin = -2.0f;
 
     // 3. 配置 Q轴 PI 参数 (控制转矩/有功)
-    pi_iq.Kp = 0.9f;
-    pi_iq.Ki = 0.1f;
-    pi_iq.OutMax = 1.5f;
-    pi_iq.OutMin = -1.5f;
+    pi_iq.Kp = 0.89850f;
+    pi_iq.Ki = 0.11236f;
+    pi_iq.OutMax = 3.0f;
+    pi_iq.OutMin = -3.0f;
 
     // 4. 清零中间变量
     foc.Theta = 0;

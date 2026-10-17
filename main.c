@@ -56,11 +56,11 @@ void StateMachine_Task(void)
         case STATE_CALIB:
         {
             // 读取电流零位  读取结束后 跳转到对齐
-            GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;   // 此处关使能是否合理？
-            Read_Phase_Current_Zero();     // 读取霍尔零位
-            GpioDataRegs.GPBSET.bit.GPIO52 = 1;
-            DELAY_US(5);
-            sys_state = STATE_ALIGN;       // 自动跳到对齐
+            //GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;   // 此处关使能是否合理？
+            //Read_Phase_Current_Zero();     // 读取霍尔零位
+            //GpioDataRegs.GPBSET.bit.GPIO52 = 1;
+            //DELAY_US(5);
+            //sys_state = STATE_ALIGN;       // 自动跳到对齐
         break;
         }
 
@@ -133,7 +133,7 @@ void main(void)
     Init_eCANB_Config();
     Diagnostic_Init();
     InitEQep1_AS5047P();
-    InitHallGpio();         // 配置GPIO24 25 26为普通GPIO 输入 开启上拉电阻
+    //InitHallGpio();         // 配置GPIO24 25 26为普通GPIO 输入 开启上拉电阻
 //  -- 配置 GPIO 引脚 功能
     EALLOW;
     GpioCtrlRegs.GPAMUX1.bit.GPIO0 = 1;      // GPIO0 -> EPWM1A
@@ -146,6 +146,14 @@ void main(void)
     GpioCtrlRegs.GPAMUX2.bit.GPIO17 = 2;      // GPIO17 -> CANRXB
     GpioCtrlRegs.GPAPUD.bit.GPIO17 = 0;       // 极重要：开启 CANRXB(GPIO17) 的内部上拉电阻
     GpioCtrlRegs.GPAQSEL2.bit.GPIO17 = 3;     // 将 GPIO17 设为异步输入，避免 CPU 采样窗延迟
+
+#warning // 临时代码 配置一个GPIO26用于测试代码执行时间 后续需要清除掉 重新配置为采集UVW霍尔位置
+    // GPIO26配置为普通GPIO
+    GpioCtrlRegs.GPAMUX2.bit.GPIO26 = 0;
+    // 配置为输出
+    GpioCtrlRegs.GPADIR.bit.GPIO26 = 1;
+    // 初始输出低电平
+    GpioDataRegs.GPACLEAR.bit.GPIO26 = 1;
 
     // TZ保护引脚
     // 1. 将 GPIO12 设置为 TZ1 功能引脚
@@ -199,7 +207,7 @@ void main(void)
 
         //can_send_flag = Send_Message_WithTimeout();
         // 接收可以一直轮询，因为不怎么耗时
-        Read_Phase_Currents();
+
         Check_CAN_Receive();
         StateMachine_Task();  // 状态机
         CANIF_RxISRHandler();

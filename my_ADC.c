@@ -74,6 +74,7 @@ void InitAdc_User(void)
      *  串联时  在  ADCCHSELSEQ1 到和 ADCCHSELSEQ4  填0-15 代表A0-7和B0-7
      */
     AdcRegs.ADCTRL1.bit.ACQ_PS = 0xF;      // 采样窗口设大一点，保证信号稳定 (16个ADCCLK)
+    AdcRegs.ADCTRL3.bit.ADCCLKPS = 0;
     AdcRegs.ADCTRL1.bit.CPS = 0;           // 预分频不需再分
     AdcRegs.ADCTRL1.bit.SEQ_CASC = 1;      // 级联模式 (16通道看作一个序列，方便管理)
 
@@ -129,8 +130,14 @@ void Read_Phase_Currents(void)
     //Uint16 RunMode;  // 0:虚拟角度开环If  1：真实角度
     Uint16 Cal_Offset_Flag = 0;  // 对齐后 寻找QEP的offset
     float speed_rpm = 0;
+
+    static Uint16 offset_cnt = 0;
+    static float32 sum_ia = 0.0f;
+    static float32 sum_ib = 0.0f;
+    static float32 sum_ic = 0.0f;
+
 __interrupt void adc_isr(void)
-{
+{   GpioDataRegs.GPASET.bit.GPIO26 = 1;
     static Uint16 self_check_cnt = 0;
     static Uint16 CAN_time_100us_cnt = 0;
 
@@ -195,16 +202,29 @@ __interrupt void adc_isr(void)
 
       // 读电流零位
       case STATE_CALIB:
-        /*
-          GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
-          Read_Phase_Current_Zero();     // 读取霍尔零位
-          GpioDataRegs.GPBSET.bit.GPIO52 = 1;
-          DELAY_US(5);
 
-          //zero_offset_rad = 3.47715044;
-          // sys_state = STATE_RUN;       // 跳过对齐 直接跑
-          sys_state = STATE_ALIGN;       // 自动跳到对齐
-        */
+          GpioDataRegs.GPBCLEAR.bit.GPIO52 = 1;
+          if(offset_cnt < 1024)
+              {
+                  sum_ia += raw_Ia;
+                  sum_ib += raw_Ib;
+                  sum_ic += raw_Ic;
+                  offset_cnt++;
+              }
+           else
+              {
+                  ia_offset = sum_ia / 1024.0f;
+                  ib_offset = sum_ib / 1024.0f;
+                  ic_offset = sum_ic / 1024.0f;
+                  offset_cnt = 0;
+                  sum_ia = 0.0f;
+                  sum_ib = 0.0f;
+                  sum_ic = 0.0f;
+                  //offset_calibrated = 1;
+                  sys_state = STATE_ALIGN;
+              }
+          GpioDataRegs.GPBSET.bit.GPIO52 = 1;
+
       break;
 
       // 对齐
@@ -252,6 +272,7 @@ __interrupt void adc_isr(void)
                         pi_iq.Ref = 0;
                         pi_spd.Ref = 0;
                         pi_spd.Ui = 0; pi_spd.Out = 0; // <--- 必须加上！彻底清除速度环历史记忆
+                        QEP_Speed_Reset();          // 进入闭环前重新开始 M/T 测速窗口
                     }
                   }
 
@@ -274,21 +295,28 @@ __interrupt void adc_isr(void)
               // while(foc.Theta >= 6.2831853f) foc.Theta -= 6.2831853f;
               foc.SinVal = sinf(foc.Theta);
               foc.CosVal = cosf(foc.Theta);
-              // --- 新增：500Hz 速度外环 ---
-                              speed_loop_cnt++;
-                              if (speed_loop_cnt >= 40) // 40分频执行
-                              {
-                                  speed_loop_cnt = 0;
-                                  // 1. 计算实际速度
-                                  speed_fdb = Calculate_Speed(foc.Theta);
-                                  speed_rpm = speed_fdb * 2.3873f;
-                                  // 2. 运行速度 PI
-                                  pi_spd.Ref = speed_target; // 电角速度
-                                  pi_spd.Fdb = -speed_fdb;
-                                  Run_PI(&pi_spd);
-                                  // 3. 速度环的输出，直接作为电流环的目标值！
-                                  pi_iq.Ref = pi_spd.Out;
-                              }
+              // --- eQEP M/T 测速 ---
+              // 每个 10kHz ADC ISR 都调用；函数内部只在 UTO/UPEVNT 有新数据时更新。
+              QEP_Speed_Update();
+
+              // --- 250Hz 速度外环：10kHz / 40 = 250Hz ---
+              speed_loop_cnt++;
+              if (speed_loop_cnt >= 40)
+              {
+                  speed_loop_cnt = 0;
+
+                  // 1. 使用 M/T 融合后的 eQEP 速度
+                  speed_fdb = g_qep_speed.elec_rad_s;  // 电角速度 rad/s，方向与旧 Calculate_Speed 保持一致
+                  speed_rpm = g_qep_speed.mech_rpm;    // 机械转速 rpm，可直接用于 CAN 上报
+
+                  // 2. 运行速度 PI
+                  pi_spd.Ref = speed_target;           // 仍保持你当前工程的“电角速度给定”语义
+                  pi_spd.Fdb = -speed_fdb;             // 保留你当前工程已有的方向处理
+                  Run_PI(&pi_spd);
+
+                  // 3. 速度环输出作为 q 轴电流给定
+                  pi_iq.Ref = pi_spd.Out;
+              }
 
             // --- 正变换 (Feedback) ---  将采集到的Ia和Ib 变换为Id和Iq 提供给电流环PI的反馈端
             Run_Clarke(&foc);
@@ -396,10 +424,10 @@ __interrupt void adc_isr(void)
       can_pack_cnt++;
       if (can_pack_cnt > 99) // 200分频执行 10ms一次
       {
-          //CAN_TX_MSG_101_MDL.Vbus_Raw = ;
-          TxMsg_101_MDL.bit.Ia_Raw = (Uint16)((int16_t)(m_current.Ia * 100.0f));// 0x101 报文打包：相电流 (Factor = 0.01)
-          TxMsg_101_MDH.bit.Ib_Raw = (Uint16)((int16_t)(m_current.Ib * 100.0f));
-          TxMsg_101_MDH.bit.Ic_Raw = (Uint16)((int16_t)(m_current.Ic * 100.0f));
+          TxMsg_101_MDL.bit.Vbus_Raw = (Uint16)(m_current.Udc * 100.0f + 32767 );
+          TxMsg_101_MDL.bit.Ia_Raw = (Uint16)(m_current.Ia * 100.0f + 32767 );// 0x101 报文打包：相电流 (Factor = 0.01)
+          TxMsg_101_MDH.bit.Ib_Raw = (Uint16)(m_current.Ib * 100.0f + 32767 );
+          TxMsg_101_MDH.bit.Ic_Raw = (Uint16)(m_current.Ic * 100.0f + 32767 );
 
           TxMsg_102_MDL.bit.Theta_Raw  = (Uint16)(foc.Theta * 100.0f);
           TxMsg_102_MDL.bit.Speed_Raw  = (Uint16)(speed_rpm * 10.0f + 32767 );
@@ -415,6 +443,8 @@ __interrupt void adc_isr(void)
           uds_cnt = 0;
           uds_flag = 1;
       }
+      GpioDataRegs.GPACLEAR.bit.GPIO26 = 1;
+
 } // 中断函数结束
 
 void Read_Phase_Current_Zero(void)
@@ -423,6 +453,8 @@ void Read_Phase_Current_Zero(void)
     float32 sum_ia = 0;
     float32 sum_ib = 0;
     float32 sum_ic = 0;
+    EALLOW;
+    EPwm1Regs.ETSEL.bit.SOCAEN = 0;  // 关闭ePWM触发ADC中断 采集零位结束后再开启
     for (i = 0; i < 1024; i++)
     {
         // 1. 软件强制触发一次 ADC 采样 (发令枪)
@@ -437,9 +469,12 @@ void Read_Phase_Current_Zero(void)
         sum_ic += (float32)(AdcRegs.ADCRESULT2>>4);
         DELAY_US(100);
      }
-        ia_offset = sum_ia / 1024.0f;
-        ib_offset = sum_ib / 1024.0f;
-        ic_offset = sum_ic / 1024.0f;
-        i = 0;
+
+     ia_offset = sum_ia * 0.0009765f;  //  将原来的/1024变成乘法 1024.0f;
+     ib_offset = sum_ib * 0.0009765f;
+     ic_offset = sum_ic * 0.0009765f;
+     i = 0;
+     EPwm1Regs.ETSEL.bit.SOCAEN = 1;
+     EDIS;
 }
 

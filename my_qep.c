@@ -1,6 +1,7 @@
 #include "DSP2833x_Device.h"
 #include "DSP2833x_Examples.h"
 #include "my_foc.h"
+#include "my_qep.h"
 /*  QEPCTL (QEP 控制寄存器) —— “总司令与发令枪”
  *  这个寄存器决定了 eQEP 模块什么时候开始工作，以及它遇到特殊事件（比如 Z 脉冲、定时器溢出）时该做出什么动作。
  *  15:14   FREE_SOFT       仿真控制模式。
@@ -70,23 +71,71 @@
  *  在 QEPCTL (上次提到的寄存器) 中，我们可以配置：“每次遇到 Z (Index) 脉冲时，把 QPOSINIT 的值覆盖掉 QPOSCNT”
  *  意义： 这样可以完全消除由于电磁干扰导致的“丢步”累积误差。每次转到原点，计数器就被强行“拨乱反正”
  */
-/*  QPOSCNT (Position Counter Register) —— “核心实时里程表”
- *  大小： 32位 (全有效)核心功能： 这是 eQEP 模块的心脏。它根据 A/B 相的脉冲，实时在 $0$ 到 QPOSMAX 之间往复跳动。
- *  防坑指南： 理论上，你可以直接在代码里读它 (angle = EQep1Regs.QPOSCNT;) 来算电角度。
- *           但如果你要用它来算速度，绝对不要直接读它！应该去读它的锁存影子寄存器 QPOSLAT（我们在上一节讲过），
- *           否则你会遇到读取时刻不同步带来的严重速度抖动。
+/*  QPOSCNT (Position Counter Register) —— “实时位置计数器”
+ *
+ *  作用：eQEP 根据 A/B 两相信号实时加/减计数，QPOSCNT 在 0 ~ QPOSMAX 之间变化。
+ *
+ *  本工程中的用途：
+ *      1) FOC 实时电角度：直接读取 QPOSCNT。电流环 10 kHz，需要尽可能新的转子位置。
+ *      2) M 法测速：不在任意软件时刻读 QPOSCNT，而是让 Unit Timer 在固定时刻
+ *         把 QPOSCNT 锁存到 QPOSLAT，再对相邻两次 QPOSLAT 做差。
+ *
+ *  注意：QPOSCNT 并不是“不能用于测速”。如果软件采样周期足够严格，也可以直接做差测速。
+ *        本工程选择 QPOSLAT，是为了让采样时刻由 eQEP 硬件保证，减少 CPU 执行抖动影响。
  */
-/*  QUPRD (Unit Timer Period Register) —— “高速测速的节拍器”
- *  测“电机在固定时间里能走多少个脉冲”(中高速 M 法测速)
- *  大小： 32位 (全有效)
- *  核心功能： 它是单位定时器 (Unit Timer) 的周期设定值。
- *  硬件里有一个定时器以系统时钟(SYSCLKOUT)的频率在跑，当它数到 QUPRD 的值时，就会触发一个 UPEVN (单位时间事件)
- *  硬件联动魔法： 当 UPEVN 触发的这 1 皮秒内，硬件会做两件事：把当前的 QPOSCNT 强行复制一份存进 QPOSLAT
- *                                                 把 QEPSTS.bit.UPEVNT 标志位置 1，并产生中断
- *  实战怎么配：假设你想每 1 毫秒 (1ms) 算一次转速，系统时钟是 150MHz：
- *   QUPRD = 150MHz * 1ms = 150,000,000 * 0.001 = 150,000
- *   你在代码里写 EQep1Regs.QUPRD = 150000;
- *   然后在你的速度环代码里，直接用 (本次 QPOSLAT - 上次 QPOSLAT) / 1ms，这就是极其平滑的高速转速反馈！
+
+/*  QUTMR / QUPRD / UTO —— M 法测速的固定时间基准
+ *
+ *  QUTMR：Unit Timer 当前计数值。
+ *  QUPRD：Unit Timer 周期设定值。QEPCTL.UTE=1 后，QUTMR 以 SYSCLKOUT 计数。
+ *
+ *  UTO = Unit Time-Out，即“单位定时器到期事件/标志”。
+ *
+ *  本工程：SYSCLKOUT=150MHz，M 法采样频率=250Hz，所以 QUPRD=600000，约每 4ms 一次 UTO。
+ *
+ *  当 QEPCTL.QCLM=1 时，每次 UTO 到来会把：
+ *      QPOSCNT -> QPOSLAT
+ *  同时 QFLG.UTO 置 1。软件读取 QPOSLAT 完成一次 M 法计算后，用 QCLR.UTO 清标志。
+ *
+ *  UTO 和 UPEVNT 不同：
+ *      UTO    = 固定“时间”到了，服务于 M 法。
+ *      UPEVNT = 固定“位置增量”到了，服务于 T 法。
+ */
+
+/*  QCAPCTL (eQEP Capture Control Register) —— T 法测速核心寄存器
+ *
+ *  T 法问的是：“走固定数量的位置 count，用了多少时间？”
+ *
+ *  CEN —— Capture Enable
+ *      0：关闭 Capture 单元；1：开启 Capture 单元。
+ *      修改 UPPS/CCPS 前先 CEN=0，配置后再 CEN=1。
+ *
+ *  UPPS —— Unit Position Event Prescaler
+ *      决定经过多少个 QCLK count 产生一次 UPEVNT。
+ *      UPPS=0 -> QCLK/1；UPPS=1 -> QCLK/2；UPPS=2 -> QCLK/4；UPPS=3 -> QCLK/8 ……
+ *      本工程 UPPS=0，所以每 1 个 eQEP 位置 count 产生一次 UPEVNT。
+ *
+ *  CCPS —— Capture Clock Prescaler
+ *      决定 Capture Timer(QCTMR) 的计数时钟。
+ *      CCPS=0 -> SYSCLK/1；1 -> /2；2 -> /4 …… 7 -> /128。
+ *      本工程 CCPS=7，所以 CAPCLK=150MHz/128=1.171875MHz，一个 tick 约 0.853us。
+ *
+ *  Capture 相关寄存器/标志：
+ *      QCTMR：Capture Timer 当前计数值。
+ *      QCPRD：每次 UPEVNT 到来时保存上一个位置事件到本次事件之间的 Capture tick 数。
+ *      UPEVNT：有新的 Unit Position Event。
+ *      COEF：Capture Timer 溢出，本次周期无效。
+ *      CDEF：两个位置事件之间发生方向变化，本次周期不适合直接算单一方向速度。
+ *
+ *  本工程 T 法公式（UPPS=0，即每次事件相隔 1 count）：
+ *
+ *                   CAPCLK × 1 × 60
+ *      rpm = 方向 × ----------------------
+ *                  QCPRD × 每圈总 count
+ *
+ *  QCPRD 与 QCPRDLAT：
+ *      当前 QCLM=1，QCPRDLAT 是 UTO 时对 QCPRD 的锁存快照，并非每个 UPEVNT 都更新。
+ *      因此 T 法读取最新周期时使用 QCPRD，而不是 QCPRDLAT。
  */
 
 void InitEQep1_AS5047P(void)
@@ -148,19 +197,32 @@ void InitEQep1_AS5047P(void)
     EQep1Regs.QEPCTL.bit.IEI = 2;        // 指定 Index 事件由上升沿触发
 
     // =========================================================
-    // 4. 单位定时器配置 (Unit Timer) - 用于后续计算转速
+    // 4. Unit Timer：给 M 法制造严格固定的 4 ms 测量窗口
     // =========================================================
-    // 假设 F28335 运行在 150MHz 系统时钟下，我们设定 1ms 锁存一次位置
-    EQep1Regs.QUPRD = 150000000 / 1000;   // 1ms 对应的时钟周期数
-
-    EQep1Regs.QEPCTL.bit.UTE = 1;         // 使能单位定时器
-    EQep1Regs.QEPCTL.bit.QCLM = 1;        // 当 1ms 时间到时，硬件自动将 QPOSCNT 的值锁存到 QPOSLAT 寄存器中
+    // M 法：固定时间 Δt 内统计位置变化量 ΔM。
+    // SYSCLKOUT=150MHz，QEP_M_SAMPLE_HZ=250Hz -> QUPRD=600000 -> 每约4ms一次UTO。
+    // QCLM=1 时，UTO 到来会把 QPOSCNT 锁存到 QPOSLAT。
+    EQep1Regs.QUPRD = (Uint32)(DSP_Sys_Clock_Freq / QEP_M_SAMPLE_HZ);
+    EQep1Regs.QEPCTL.bit.UTE = 1;         // UTE：Unit Timer Enable，1=启动 QUTMR
+    EQep1Regs.QEPCTL.bit.QCLM = 1;        // UTO 时锁存 QPOSCNT -> QPOSLAT
 
     // =========================================================
-    // 5. 启动模块
+    // 5. QCAPCTL：给 T 法配置 eQEP Capture 单元
+    // =========================================================
+    // UPPS=0 -> 每1个QCLK count产生一次UPEVNT。
+    // CCPS=7 -> Capture时钟=SYSCLKOUT/128=1.171875MHz。
+    EQep1Regs.QCAPCTL.bit.CEN = 0;        // CEN：0=关闭 Capture，先关再改分频
+    EQep1Regs.QCAPCTL.bit.UPPS = QEP_T_UPPS_BITS; // 当前0：QCLK/1，每1个位置count一次事件
+    EQep1Regs.QCAPCTL.bit.CCPS = QEP_T_CCPS_BITS; // 当前7：SYSCLK/128
+    EQep1Regs.QCAPCTL.bit.CEN = 1;        // 1=开启 Capture，T 法开始工作
+
+    // =========================================================
+    // 6. 启动模块
     // =========================================================
     EQep1Regs.QPOSCNT = 0;                // 计数器清零
     EQep1Regs.QEPCTL.bit.QPEN = 1;        // 全面使能 eQEP1 模块开始工作
+
+    QEP_Speed_Reset();
 }
 
     int32 QEP_Offset = 0;       // 使用有符号 32 位整型
@@ -191,13 +253,13 @@ void Calculate_QEP_Angle(void)
     }*/
 
     // 4. 计算机械角度 (弧度)
-    QEP_Mech_Theta = (float)delta_pos * (-6.2831853f / 4000.0f);
+    QEP_Mech_Theta = (float)delta_pos * (-6.2831853f / QEP_COUNTS_PER_REV_F);
 
     // 5. 计算电角度 = 机械角度 * 极对数
     QEP_Elc_Theta = ( QEP_Mech_Theta * MOTOR_Pole_pairs ) - CONST_MAGNETIC_OFFSET ;
 
     // 6. 将电角度归一化到 0 ~ 2*PI 之间
-    // （因为乘了 7，所以结果可能会达到 14*PI，必须把多余的圈数去掉）
+    // 乘以极对数后会跨越多个 2*PI 周期，因此需要归一化。
     while(QEP_Elc_Theta >= 6.2831853f)
     {
         QEP_Elc_Theta -= 6.2831853f;
@@ -211,6 +273,308 @@ void Calculate_QEP_Angle(void)
     //qep_spi = QEP_Elc_Theta - foc.Theta;
     // 现在，你可以在 Expressions 里安全地把 QEP_Elc_Theta 和你的 SPI 角度进行对比了！
 }
+
+/* ============================================================
+ * eQEP M/T 测速模块
+ *
+ * QPOSLAT -> M 法 --\
+ *                    -> M/T 选择 -> mech_rpm -> elec_rad_s
+ * QCPRD   -> T 法 --/
+ * ============================================================ */
+
+/*
+ * g_qep_speed：测速模块运行状态与调试变量。
+ *
+ * mech_rpm：M/T选择后的最终机械转速，单位rpm。
+ * elec_rad_s：最终电角速度，单位rad/s；=mech_rpm*2π/60*极对数。
+ *
+ * m_rpm_raw：M法原始机械rpm，未滤波。
+ * m_rpm_filt：M法一阶低通后的机械rpm。
+ * m_delta_count：本次4ms窗口内的位置count变化量，已处理跨圈。
+ * m_valid：M法是否已有有效样本，0=没有，1=有。
+ *
+ * t_rpm_raw：T法根据最新QCPRD得到的原始机械rpm。
+ * t_rpm_filt：T法一阶低通后的机械rpm。
+ * t_capture_period：最近一次QCPRD原始值，即相邻位置事件之间的CAPCLK tick数。
+ *                   低速时大，高速时小；约100rpm->176，200rpm->88，450rpm->39。
+ * t_valid：T法当前结果是否有效，0=无效，1=有效。
+ *
+ * method：当前最终速度采用的方法：0=T法，1=M法。
+ *         T->M阈值约300rpm，M->T阈值约200rpm，中间100rpm作为滞环。
+ *
+ * t_overflow_count：QEPSTS.COEF出现次数累计；COEF表示Capture Timer溢出。
+ * t_dir_error_count：QEPSTS.CDEF出现次数累计；CDEF表示捕获周期内发生方向变化。
+ */
+QEP_SPEED_ESTIMATOR_t g_qep_speed = {0};
+
+static int32 s_m_last_pos = 0;      // 上一次UTO时的QPOSLAT，M法本次用当前值减它
+static Uint16 s_m_filter_init = 0U; // M法低通滤波器是否已用首个有效样本初始化
+static Uint16 s_t_filter_init = 0U; // T法低通滤波器是否已用首个有效样本初始化
+
+/*
+ * 连续多少次 QEP_Speed_Update() 没看到新的 UPEVNT。
+ * 当前函数在10kHz ISR中调用，1次约0.1ms；800次约80ms。
+ * 真正静止时不会再有“下一个边沿”，所以T法必须靠这个超时主动判0rpm。
+ */
+static Uint16 s_t_no_event_cnt = 0U;
+
+#define QEP_T_ZERO_TIMEOUT_COUNT    800U   // 约80ms无UPEVNT -> 判0rpm
+#define QEP_M_LPF_ALPHA             0.25f  // M法一阶低通系数：越大响应越快、滤波越弱
+#define QEP_T_LPF_ALPHA             0.20f  // T法一阶低通系数：越大响应越快、滤波越弱
+#define QEP_TWO_PI_OVER_60          0.1047197551f // 2π/60，用于rpm -> rad/s
+
+static float QEP_AbsF(float x)
+{
+    if (x < 0.0f) return -x;
+    return x;
+}
+
+static int32 QEP_WrapDelta(int32 delta)
+{
+    const int32 half_count = (int32)(QEP_COUNTS_PER_REV / 2L);
+
+    if (delta > half_count)
+    {
+        delta -= (int32)QEP_COUNTS_PER_REV;
+    }
+    else if (delta < -half_count)
+    {
+        delta += (int32)QEP_COUNTS_PER_REV;
+    }
+    return delta;
+}
+
+void QEP_Speed_Reset(void)
+{
+    g_qep_speed.mech_rpm = 0.0f;
+    g_qep_speed.elec_rad_s = 0.0f;
+
+    g_qep_speed.m_rpm_raw = 0.0f;
+    g_qep_speed.m_rpm_filt = 0.0f;
+    g_qep_speed.m_delta_count = 0;
+    g_qep_speed.m_valid = 0U;
+
+    g_qep_speed.t_rpm_raw = 0.0f;
+    g_qep_speed.t_rpm_filt = 0.0f;
+    g_qep_speed.t_capture_period = 0U;
+    g_qep_speed.t_valid = 0U;
+
+    g_qep_speed.method = (Uint16)QEP_SPEED_METHOD_T;
+    g_qep_speed.t_overflow_count = 0U;
+    g_qep_speed.t_dir_error_count = 0U;
+
+    s_m_last_pos = (int32)EQep1Regs.QPOSCNT;
+    s_m_filter_init = 0U;
+    s_t_filter_init = 0U;
+    s_t_no_event_cnt = 0U;
+
+    /* 从“现在”开始重新计 4 ms，避免第一次 M 法窗口长度不确定。 */
+    EQep1Regs.QUTMR = 0U;
+
+    /* 清除旧的 Unit Timeout 和 Capture 状态。 */
+    EQep1Regs.QCLR.bit.UTO = 1;
+    EQep1Regs.QEPSTS.all = 0x008CU;   // clear UPEVNT(bit7), COEF(bit3), CDEF(bit2)
+}
+
+static void QEP_Update_M_Method(void)
+{
+    int32 pos_now;     // 本次UTO时刻锁存的QPOSLAT
+    int32 delta;       // 本次4ms内的位置增量，已处理跨圈
+    float rpm_raw;     // M法原始机械转速，单位rpm
+
+    if (EQep1Regs.QFLG.bit.UTO == 0U)
+    {
+        return;
+    }
+
+    /* QPOSLAT 是硬件在 4 ms Unit Timeout 那一刻锁存的位置。 */
+    pos_now = (int32)EQep1Regs.QPOSLAT;
+    delta = QEP_WrapDelta(pos_now - s_m_last_pos);
+    s_m_last_pos = pos_now;
+
+    g_qep_speed.m_delta_count = delta;
+
+    rpm_raw = (float)delta
+            * (60.0f * (float)QEP_M_SAMPLE_HZ / QEP_COUNTS_PER_REV_F)
+            * QEP_SPEED_DIRECTION_SIGN;
+
+    g_qep_speed.m_rpm_raw = rpm_raw;
+
+    if (s_m_filter_init == 0U)
+    {
+        g_qep_speed.m_rpm_filt = rpm_raw;
+        s_m_filter_init = 1U;
+    }
+    else
+    {
+        g_qep_speed.m_rpm_filt += QEP_M_LPF_ALPHA
+                               * (rpm_raw - g_qep_speed.m_rpm_filt);
+    }
+
+    g_qep_speed.m_valid = 1U;
+
+    /* UTO 是 QFLG 中的锁存标志，必须通过 QCLR 清除。 */
+    EQep1Regs.QCLR.bit.UTO = 1;
+}
+
+static void QEP_Update_T_Method(void)
+{
+    Uint16 status;          // QEPSTS快照：UPEVNT/COEF/CDEF/QDF等
+    Uint16 period;          // 最新QCPRD：相邻位置事件之间的Capture tick数
+    float direction;        // 当前方向系数：+1.0f或-1.0f
+    float rpm_raw;          // T法原始机械转速，单位rpm
+    Uint16 clear_mask = 0U; // 本次需要写1清除的QEPSTS状态位集合
+
+    if (s_t_no_event_cnt < 0xFFFFU)
+    {
+        s_t_no_event_cnt++;
+    }
+
+    status = EQep1Regs.QEPSTS.all;
+
+    /* Capture Timer 溢出：当前周期无效。 */
+    if ((status & 0x0008U) != 0U)      // COEF bit3
+    {
+        if (g_qep_speed.t_overflow_count < 0xFFFFU)
+        {
+            g_qep_speed.t_overflow_count++;
+        }
+        g_qep_speed.t_valid = 0U;
+        clear_mask |= 0x0008U;
+    }
+
+    /* 两个 Unit Position Event 之间发生方向翻转：丢弃本次 T 法数据。 */
+    if ((status & 0x0004U) != 0U)      // CDEF bit2
+    {
+        if (g_qep_speed.t_dir_error_count < 0xFFFFU)
+        {
+            g_qep_speed.t_dir_error_count++;
+        }
+        g_qep_speed.t_valid = 0U;
+        clear_mask |= 0x0004U;
+    }
+
+    if ((status & 0x0080U) != 0U)      // UPEVNT bit7
+    {
+        /*
+         * QCPRD 在每个 Unit Position Event 更新；
+         * 在 QCLM=1 时不要把 QCPRDLAT 当成“每边沿周期”。
+         */
+        period = EQep1Regs.QCPRD;
+        g_qep_speed.t_capture_period = period;
+        s_t_no_event_cnt = 0U;
+        clear_mask |= 0x0080U;
+
+        if (((status & 0x000CU) == 0U) && (period != 0U))
+        {
+            /* QDF=1：位置计数器正向增加；QDF=0：反向减少。 */
+            if ((status & 0x0020U) != 0U)
+            {
+                direction = 1.0f;
+            }
+            else
+            {
+                direction = -1.0f;
+            }
+
+            rpm_raw = direction
+                    * QEP_SPEED_DIRECTION_SIGN
+                    * (QEP_T_CAPCLK_HZ * QEP_T_UNIT_COUNTS * 60.0f)
+                    / ((float)period * QEP_COUNTS_PER_REV_F);
+
+            g_qep_speed.t_rpm_raw = rpm_raw;
+
+            if (s_t_filter_init == 0U)
+            {
+                g_qep_speed.t_rpm_filt = rpm_raw;
+                s_t_filter_init = 1U;
+            }
+            else
+            {
+                g_qep_speed.t_rpm_filt += QEP_T_LPF_ALPHA
+                                       * (rpm_raw - g_qep_speed.t_rpm_filt);
+            }
+            g_qep_speed.t_valid = 1U;
+        }
+    }
+
+    if (clear_mask != 0U)
+    {
+        /* QEPSTS 中 UPEVNT/COEF/CDEF 都是写 1 清零。 */
+        EQep1Regs.QEPSTS.all = clear_mask;
+    }
+
+    /*
+     * 真正零速时不会再有边沿，所以 T 法本身“永远等不到下一次周期”。
+     * 超过约 80 ms 没有新边沿，直接判为 0 rpm。
+     * 以当前配置，Capture 16 位计数器本身的极低速下限约为 0.27 rpm。
+     */
+    if (s_t_no_event_cnt >= QEP_T_ZERO_TIMEOUT_COUNT)
+    {
+        g_qep_speed.t_rpm_raw = 0.0f;
+        g_qep_speed.t_rpm_filt = 0.0f;
+        g_qep_speed.t_valid = 1U;
+        s_t_filter_init = 1U;
+        s_t_no_event_cnt = QEP_T_ZERO_TIMEOUT_COUNT;
+    }
+}
+
+static void QEP_Select_MT_Method(void)
+{
+    float abs_speed;   // 切换只看速度绝对值，不看正反方向
+
+    if (g_qep_speed.method == (Uint16)QEP_SPEED_METHOD_T)
+    {
+        abs_speed = QEP_AbsF(g_qep_speed.t_rpm_filt);
+
+        /* T -> M：超过 300 rpm，且 M 法已有有效样本。 */
+        if ((g_qep_speed.m_valid != 0U) &&
+            (((g_qep_speed.t_valid != 0U) && (abs_speed >= QEP_SWITCH_TO_M_RPM)) ||
+             (g_qep_speed.t_valid == 0U)))
+        {
+            g_qep_speed.method = (Uint16)QEP_SPEED_METHOD_M;
+        }
+    }
+    else
+    {
+        abs_speed = QEP_AbsF(g_qep_speed.m_rpm_filt);
+
+        /* M -> T：降到 200 rpm 以下，并且 T 法已有有效样本。 */
+        if ((g_qep_speed.t_valid != 0U) &&
+            (abs_speed <= QEP_SWITCH_TO_T_RPM))
+        {
+            g_qep_speed.method = (Uint16)QEP_SPEED_METHOD_T;
+        }
+    }
+
+    if ((g_qep_speed.method == (Uint16)QEP_SPEED_METHOD_T) &&
+        (g_qep_speed.t_valid != 0U))
+    {
+        g_qep_speed.mech_rpm = g_qep_speed.t_rpm_filt;
+    }
+    else if (g_qep_speed.m_valid != 0U)
+    {
+        g_qep_speed.mech_rpm = g_qep_speed.m_rpm_filt;
+    }
+    else
+    {
+        g_qep_speed.mech_rpm = 0.0f;
+    }
+
+    /* 机械 rpm -> 电角速度 rad/s */
+    g_qep_speed.elec_rad_s = g_qep_speed.mech_rpm
+                           * QEP_TWO_PI_OVER_60
+                           * MOTOR_Pole_pairs;
+}
+
+void QEP_Speed_Update(void)
+{
+    /* 本函数虽在10kHz ISR每次调用，但M法仅在新UTO时更新，T法仅在新UPEVNT时更新。 */
+    QEP_Update_M_Method();   // 有新UTO才更新M法
+    QEP_Update_T_Method();   // 有新UPEVNT才更新T法
+    QEP_Select_MT_Method();  // 带滞环选择最终速度反馈
+}
+
 void InitHallGpio(void)
 {
     EALLOW; // 解锁受保护的配置寄存器
